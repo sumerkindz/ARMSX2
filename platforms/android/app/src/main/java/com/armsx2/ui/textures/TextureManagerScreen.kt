@@ -141,15 +141,15 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
                             }
                             Spacer(Modifier.padding(top = 10.dp))
                             TexturePacks(
-                            state,
-                            viewModel,
-                            Modifier.fillMaxWidth(),
-                            onBack,
-                            onExportPack = { pack ->
-                                pendingPackExport.value = pack
-                                packExportPicker.launch(pack.serial + ".zip")
-                            },
-                        )
+                                state,
+                                viewModel,
+                                Modifier.fillMaxWidth(),
+                                onBack,
+                                onExportPack = { pack ->
+                                    pendingPackExport.value = pack
+                                    packExportPicker.launch(pack.serial + ".zip")
+                                },
+                            )
                         }
                     }
                 }
@@ -573,12 +573,12 @@ private fun TexturePackRow(
                 TextButton(
                     onClick = onExport,
                     enabled = enabled,
-                    modifier = Modifier.controllerFocusable("textureMgr.export.\${pack.serial}", onConfirm = onExport),
+                    modifier = Modifier.controllerFocusable("textureMgr.export.${pack.serial}", onConfirm = onExport),
                 ) { Text("Export ZIP") }
                 TextButton(
                     onClick = onDelete,
                     enabled = enabled,
-                    modifier = Modifier.controllerFocusable("textureMgr.delete.\${pack.serial}", onConfirm = onDelete),
+                    modifier = Modifier.controllerFocusable("textureMgr.delete.${pack.serial}", onConfirm = onDelete),
                 ) { Text(str("action.delete")) }
             }
         }
