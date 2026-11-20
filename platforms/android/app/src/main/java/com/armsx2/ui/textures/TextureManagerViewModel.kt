@@ -11,9 +11,12 @@ import com.armsx2.data.library.GameLibraryRepository
 import com.armsx2.runtime.MainActivityRuntime
 import com.armsx2.config.ConfigStore
 import com.armsx2.config.Settings
+import java.io.BufferedOutputStream
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -449,6 +452,64 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
             }
             if (outcome.ok) reloadCore()
             refresh()
+        }
+    }
+
+    /** Create a portable ZIP pack from an installed replacements folder. */
+    fun exportPack(pack: TexturePackItem, uri: Uri) {
+        val context = getApplication<Application>()
+        state.value = state.value.copy(busy = true, progress = 0, message = null, error = null)
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = textureRoot().canonicalFile
+                    val replacementDir = pack.directory.canonicalFile
+                    val gameDir = replacementDir.parentFile
+                        ?: error("Invalid texture pack folder.")
+                    check(replacementDir.name == "replacements" && gameDir.parentFile == root) {
+                        "The selected pack is outside the emulator texture folder."
+                    }
+                    check(gameDir.name.equals(pack.serial, ignoreCase = true)) {
+                        "The selected pack serial does not match its folder."
+                    }
+
+                    val files = replacementDir.walkTopDown().filter { it.isFile }.toList()
+                    check(files.isNotEmpty()) { "There are no replacement files to export." }
+                    val output = context.contentResolver.openOutputStream(uri)
+                        ?: error("Unable to open the ZIP destination.")
+                    ZipOutputStream(BufferedOutputStream(output)).use { zip ->
+                        files.forEachIndexed { index, file ->
+                            val canonical = file.canonicalFile
+                            check(canonical.path.startsWith(replacementDir.path + File.separator)) {
+                                "A pack file points outside the replacements folder."
+                            }
+                            val entryName = canonical.relativeTo(replacementDir).path
+                                .replace(File.separatorChar, '/')
+                            check(entryName.isNotBlank() && !entryName.startsWith("/") &&
+                                entryName.split('/').none { it == ".." }
+                            ) { "Invalid ZIP entry path." }
+
+                            zip.putNextEntry(ZipEntry(entryName))
+                            canonical.inputStream().buffered().use { input -> input.copyTo(zip) }
+                            zip.closeEntry()
+                            if ((index + 1) % 25 == 0 || index == files.lastIndex) {
+                                state.value = state.value.copy(progress = index + 1)
+                            }
+                        }
+                    }
+                    files.size
+                }.fold(
+                    onSuccess = { it to null },
+                    onFailure = { null to (it.message ?: "Unable to export the texture pack.") },
+                )
+            }
+            val (count, failure) = result
+            state.value = state.value.copy(
+                busy = false,
+                progress = 0,
+                message = count?.let { "Exported " + it + " texture file(s) as " + pack.serial + ".zip." },
+                error = failure,
+            )
         }
     }
 
