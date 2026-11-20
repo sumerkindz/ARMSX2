@@ -66,6 +66,7 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
     val archivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(viewModel::importArchive) }
     val pendingReplacement = remember { androidx.compose.runtime.mutableStateOf<TextureDumpItem?>(null) }
     val pendingExport = remember { androidx.compose.runtime.mutableStateOf<TextureDumpItem?>(null) }
+    val pendingPackExport = remember { androidx.compose.runtime.mutableStateOf<TexturePackItem?>(null) }
     val replacementImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val selectedDump = pendingReplacement.value
         if (uri != null && selectedDump != null) viewModel.importReplacementImage(selectedDump, uri)
@@ -75,6 +76,11 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
         val selectedDump = pendingExport.value
         if (uri != null && selectedDump != null) viewModel.exportDump(selectedDump, uri)
         pendingExport.value = null
+    }
+    val packExportPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val selectedPack = pendingPackExport.value
+        if (uri != null && selectedPack != null) viewModel.exportPack(selectedPack, uri)
+        pendingPackExport.value = null
     }
     LaunchedEffect(Unit) { viewModel.refresh() }
     // Options on the left, packs on the right: the controller keeps to a column and crosses with
@@ -112,7 +118,16 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
                             viewModel.onPackInstalled()
                         }
                         Spacer(Modifier.padding(top = 10.dp))
-                        TexturePacks(state, viewModel, Modifier.fillMaxWidth(), onBack)
+                        TexturePacks(
+                            state,
+                            viewModel,
+                            Modifier.fillMaxWidth(),
+                            onBack,
+                            onExportPack = { pack ->
+                                pendingPackExport.value = pack
+                                packExportPicker.launch(pack.serial + ".zip")
+                            },
+                        )
                     }
                 } else {
                     Row(
@@ -125,7 +140,16 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
                                 viewModel.onPackInstalled()
                             }
                             Spacer(Modifier.padding(top = 10.dp))
-                            TexturePacks(state, viewModel, Modifier.fillMaxWidth(), onBack)
+                            TexturePacks(
+                            state,
+                            viewModel,
+                            Modifier.fillMaxWidth(),
+                            onBack,
+                            onExportPack = { pack ->
+                                pendingPackExport.value = pack
+                                packExportPicker.launch(pack.serial + ".zip")
+                            },
+                        )
                         }
                     }
                 }
@@ -432,7 +456,13 @@ private fun TextureOptions(state: TextureManagerUiState, viewModel: TextureManag
 }
 
 @Composable
-private fun TexturePacks(state: TextureManagerUiState, viewModel: TextureManagerViewModel, modifier: Modifier, onBack: () -> Unit) {
+private fun TexturePacks(
+    state: TextureManagerUiState,
+    viewModel: TextureManagerViewModel,
+    modifier: Modifier,
+    onBack: () -> Unit,
+    onExportPack: (TexturePackItem) -> Unit,
+) {
     Column(modifier) {
         SectionTitle(str("renderer.section.texturePacks"), state.packs.size.toString())
         // A pack is thousands of files over SAF, so show the running count next to the
@@ -473,7 +503,14 @@ private fun TexturePacks(state: TextureManagerUiState, viewModel: TextureManager
             )
         } else {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                state.packs.forEach { pack -> TexturePackRow(pack) { viewModel.delete(pack) } }
+                state.packs.forEach { pack ->
+                    TexturePackRow(
+                        pack = pack,
+                        enabled = !state.busy,
+                        onExport = { onExportPack(pack) },
+                        onDelete = { viewModel.delete(pack) },
+                    )
+                }
             }
         }
         // The replacement map is only built in GSTextureReplacements::Initialize / GameChanged
@@ -500,7 +537,12 @@ private fun TexturePacks(state: TextureManagerUiState, viewModel: TextureManager
 }
 
 @Composable
-private fun TexturePackRow(pack: TexturePackItem, onDelete: () -> Unit) {
+private fun TexturePackRow(
+    pack: TexturePackItem,
+    enabled: Boolean,
+    onExport: () -> Unit,
+    onDelete: () -> Unit,
+) {
     Surface(
         Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(17.dp),
@@ -527,10 +569,18 @@ private fun TexturePackRow(pack: TexturePackItem, onDelete: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            TextButton(
-                onClick = onDelete,
-                modifier = Modifier.controllerFocusable("textureMgr.delete.${pack.serial}", onConfirm = onDelete),
-            ) { Text(str("action.delete")) }
+            Column(horizontalAlignment = Alignment.End) {
+                TextButton(
+                    onClick = onExport,
+                    enabled = enabled,
+                    modifier = Modifier.controllerFocusable("textureMgr.export.\${pack.serial}", onConfirm = onExport),
+                ) { Text("Export ZIP") }
+                TextButton(
+                    onClick = onDelete,
+                    enabled = enabled,
+                    modifier = Modifier.controllerFocusable("textureMgr.delete.\${pack.serial}", onConfirm = onDelete),
+                ) { Text(str("action.delete")) }
+            }
         }
     }
 }
