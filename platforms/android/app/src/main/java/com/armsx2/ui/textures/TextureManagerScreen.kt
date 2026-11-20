@@ -214,7 +214,7 @@ private fun TextureDumpBrowser(
                 )
             }
             Text(
-                "Capture applies to the running game. Select any saved game below to browse its dumps; export a PNG to edit it, then import the edited PNG to keep the original hash filename.",
+                "Capture applies to the running game and requires the Hardware renderer. Select any saved game below to browse its dumps; export a PNG to edit it, then import the edited PNG to keep the original hash filename. Turn capture OFF when finished to limit storage use.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
