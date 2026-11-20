@@ -56,7 +56,7 @@ jobs:
         run: rustup target add aarch64-linux-android
 
       - name: Build release APK
-        run: ./gradlew :app:assembleRelease --stacktrace
+        run: ./gradlew :app:assembleRelease -Parmsx2.applicationId=com.armsx2.fork -Parmsx2.appLabel="ARMSX2 Fork" --stacktrace
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
