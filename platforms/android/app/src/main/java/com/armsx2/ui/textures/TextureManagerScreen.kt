@@ -5,6 +5,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.text.font.FontWeight
@@ -165,6 +167,9 @@ private fun TextureDumpBrowser(
 ) {
     val query = remember { androidx.compose.runtime.mutableStateOf("") }
     val onlyWithoutReplacement = remember { androidx.compose.runtime.mutableStateOf(false) }
+    val selectedGame = state.dumpGames.firstOrNull {
+        it.serial.equals(state.selectedDumpSerial, ignoreCase = true)
+    }
     val visibleDumps = state.dumps.filter { item ->
         item.file.name.contains(query.value.trim(), ignoreCase = true) &&
             (!onlyWithoutReplacement.value || !item.replacementExists)
@@ -176,8 +181,8 @@ private fun TextureDumpBrowser(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                SectionTitle("Texture Dump Browser", state.activeSerial ?: "No active game")
-                TextButton(onClick = viewModel::refresh) { Text("Refresh") }
+                SectionTitle("Texture Dump Browser", selectedGame?.gameTitle ?: selectedGame?.serial ?: "No saved dumps")
+                TextButton(onClick = viewModel::refresh, enabled = !state.busy) { Text("Refresh") }
             }
             Row(
                 Modifier.fillMaxWidth(),
@@ -186,7 +191,9 @@ private fun TextureDumpBrowser(
             ) {
                 Button(
                     onClick = viewModel::toggleTextureDumping,
-                    enabled = state.activeSerial != null && !state.busy,
+                    enabled = state.activeSerial != null &&
+                        MainActivityRuntime.eState.value != com.armsx2.EmuState.STOPPED &&
+                        !state.busy,
                 ) {
                     Text("Toggle dumping")
                 }
@@ -205,52 +212,81 @@ private fun TextureDumpBrowser(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (state.activeSerial == null) {
+
+            if (state.dumpGames.isEmpty()) {
                 Text(
-                    "Start a game to browse its texture dumps.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else if (state.dumps.isEmpty()) {
-                Text(
-                    "No PNG dumps found for ${state.activeSerial}. Start the game, turn dumping ON, play for a while, then turn it OFF and refresh.",
+                    if (state.activeSerial != null) {
+                        "No saved PNG dumps found yet for " + state.activeSerial + ". Start dumping, play the game, then refresh."
+                    } else {
+                        "No saved texture dumps yet. Start a game and enable dumping to capture textures."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                OutlinedTextField(
-                    value = query.value,
-                    onValueChange = { query.value = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    label = { Text("Search texture filename / hash") },
-                )
-                TextButton(onClick = { onlyWithoutReplacement.value = !onlyWithoutReplacement.value }) {
-                    Text(if (onlyWithoutReplacement.value) "Show all dumps" else "Show only textures without replacements")
+                // Dumps remain available after a game is closed. Choose any game folder that has
+                // previously captured PNGs; the runtime toggle above still targets the live game.
+                Row(
+                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    state.dumpGames.forEach { game ->
+                        FilterChip(
+                            selected = game.serial.equals(state.selectedDumpSerial, ignoreCase = true),
+                            onClick = { viewModel.selectDumpGame(game.serial) },
+                            label = { Text("${game.gameTitle ?: game.serial} (${game.fileCount})") },
+                        )
+                    }
                 }
-                if (visibleDumps.isEmpty()) {
+                selectedGame?.let { game ->
                     Text(
-                        "No dumps match this search/filter.",
+                        "${game.serial} · ${game.fileCount} saved texture(s) · ${android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, game.totalBytes)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (state.dumps.isEmpty()) {
+                    Text(
+                        "Loading saved texture dumps…",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
-                    Text(
-                        "${visibleDumps.size} of ${state.dumps.size} recent dump(s) shown (maximum 120).",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    OutlinedTextField(
+                        value = query.value,
+                        onValueChange = { query.value = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Search texture filename / hash") },
                     )
-                    LazyColumn(
-                        modifier = Modifier.fillMaxWidth().height(440.dp),
-                        verticalArrangement = Arrangement.spacedBy(7.dp),
-                    ) {
-                        items(visibleDumps, key = { it.file.name }) { item ->
-                            TextureDumpRow(
-                                item = item,
-                                enabled = !state.busy,
-                                onExport = { onExportImage(item) },
-                                onImport = { onImportImage(item) },
-                            )
+                    TextButton(onClick = { onlyWithoutReplacement.value = !onlyWithoutReplacement.value }) {
+                        Text(if (onlyWithoutReplacement.value) "Show all dumps" else "Show only textures without replacements")
+                    }
+                    if (visibleDumps.isEmpty()) {
+                        Text(
+                            "No dumps match this search/filter.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        Text(
+                            "${visibleDumps.size} of ${selectedGame?.fileCount ?: state.dumps.size} recent dump(s) shown (maximum 120).",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().height(440.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp),
+                        ) {
+                            items(visibleDumps, key = { it.file.name }) { item ->
+                                TextureDumpRow(
+                                    item = item,
+                                    enabled = !state.busy,
+                                    onExport = { onExportImage(item) },
+                                    onImport = { onImportImage(item) },
+                                )
+                            }
                         }
                     }
                 }
