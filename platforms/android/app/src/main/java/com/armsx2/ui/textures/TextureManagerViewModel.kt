@@ -143,10 +143,12 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     )
                 }.sortedBy { (it.gameTitle ?: it.serial).lowercase() }
 
+                // Preserve the folder the user selected. On first open there is no prior
+                // selection, so prefer the running game's dumps, then the first available game.
                 val selectedSerial = dumpGames.firstOrNull {
-                    it.serial.equals(activeSerial, ignoreCase = true)
-                }?.serial ?: dumpGames.firstOrNull {
                     it.serial.equals(requestedDumpSerial, ignoreCase = true)
+                }?.serial ?: dumpGames.firstOrNull {
+                    it.serial.equals(activeSerial, ignoreCase = true)
                 }?.serial ?: dumpGames.firstOrNull()?.serial
 
                 val selectedDumpItems = selectedSerial?.let { serial ->
@@ -178,7 +180,11 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                 selectedDumpSerial = scanned.selectedDumpSerial,
                 dumps = scanned.dumps,
                 loadingDumps = false,
-                dumpingEnabled = if (state.value.activeSerial == scanned.activeSerial) state.value.dumpingEnabled else null,
+                dumpingEnabled = if (state.value.activeSerial == scanned.activeSerial && state.value.dumpingEnabled != null) {
+                    state.value.dumpingEnabled
+                } else {
+                    scanned.settings.graphics.dumpReplaceableTextures.takeIf { scanned.activeSerial != null }
+                },
             )
         }
     }
