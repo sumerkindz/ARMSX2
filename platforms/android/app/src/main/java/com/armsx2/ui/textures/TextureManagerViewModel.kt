@@ -203,6 +203,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
     /** Copy a dump to a user-selected location so it can be edited by another Android app. */
     fun exportDump(item: TextureDumpItem, uri: Uri) {
         val context = getApplication<Application>()
+        state.value = state.value.copy(busy = true, progress = 0, message = null, error = null)
         viewModelScope.launch {
             val exported = withContext(Dispatchers.IO) {
                 runCatching {
@@ -216,6 +217,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                 }.getOrDefault(false)
             }
             state.value = state.value.copy(
+                busy = false,
                 message = if (exported) "Exported ${item.file.name}."
                     else null,
                 error = if (exported) null else "Unable to export this texture dump.",
