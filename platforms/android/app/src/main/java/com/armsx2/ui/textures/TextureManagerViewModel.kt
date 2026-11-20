@@ -12,6 +12,8 @@ import com.armsx2.runtime.MainActivityRuntime
 import com.armsx2.config.ConfigStore
 import com.armsx2.config.Settings
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -198,6 +200,27 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
         )
     }
 
+    /** Copy a dump to a user-selected location so it can be edited by another Android app. */
+    fun exportDump(item: TextureDumpItem, uri: Uri) {
+        val context = getApplication<Application>()
+        viewModelScope.launch {
+            val exported = withContext(Dispatchers.IO) {
+                runCatching {
+                    check(item.file.isFile) { "The dump file no longer exists." }
+                    val output = context.contentResolver.openOutputStream(uri)
+                        ?: error("Unable to open the destination.")
+                    item.file.inputStream().use { input -> output.use(input::copyTo) }
+                    true
+                }.getOrDefault(false)
+            }
+            state.value = state.value.copy(
+                message = if (exported) "Exported ${item.file.name}."
+                    else null,
+                error = if (exported) null else "Unable to export this texture dump.",
+            )
+        }
+    }
+
     /**
      * Import an edited PNG for a dumped texture. The output filename is deliberately taken from
      * the dump, not the picked image: that name contains the PS2 texture hash the core matches.
@@ -226,10 +249,15 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                         stream.read(header) == header.size && header.contentEquals(pngSignature)
                     }
                     check(isPng) { "Choose an edited PNG image. Other image formats are not accepted yet." }
-                    if (target.exists()) check(target.delete()) { "Unable to replace the existing texture file." }
-                    if (!temporary.renameTo(target)) {
-                        temporary.copyTo(target, overwrite = true)
-                        temporary.delete()
+                    runCatching {
+                        Files.move(
+                            temporary.toPath(),
+                            target.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE,
+                        )
+                    }.getOrElse {
+                        Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
                     }
                     true
                 }.getOrElse {
