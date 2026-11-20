@@ -205,8 +205,11 @@ private fun TextureDumpBrowser(
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    state.dumps.forEach { item ->
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().height(440.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp),
+                ) {
+                    items(state.dumps, key = { it.file.name }) { item ->
                         TextureDumpRow(item = item, enabled = !state.busy, onImport = { onImportImage(item) })
                     }
                 }
