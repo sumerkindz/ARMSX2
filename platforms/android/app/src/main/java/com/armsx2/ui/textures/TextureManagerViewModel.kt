@@ -55,6 +55,8 @@ data class TextureManagerUiState(
     val selectedDumpSerial: String? = null,
     val dumps: List<TextureDumpItem> = emptyList(),
     val loadingDumps: Boolean = false,
+    /** Incremental cap keeps thumbnail decoding bounded on Android. */
+    val dumpLimit: Int = 120,
     val dumpingEnabled: Boolean? = null,
     /** Serials in the user's ROM library, upper-cased. Read from the scan cache, never scanned here. */
     val librarySerials: Set<String> = emptySet(),
@@ -89,6 +91,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
     fun refresh() {
         val activeSerial = runtimeSerial()
         val requestedDumpSerial = state.value.selectedDumpSerial
+        val requestedDumpLimit = state.value.dumpLimit
         viewModelScope.launch {
             val scanned = withContext(Dispatchers.IO) {
                 val root = textureRoot().apply { mkdirs() }
@@ -161,7 +164,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     dumpDir.listFiles().orEmpty()
                         .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
                         .sortedByDescending { it.lastModified() }
-                        .take(120)
+                        .take(requestedDumpLimit)
                         .map { file -> TextureDumpItem(serial, file, File(replacementDir, file.name).isFile) }
                 }.orEmpty()
 
@@ -195,6 +198,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
 
     fun selectDumpGame(serial: String) {
         if (state.value.selectedDumpSerial.equals(serial, ignoreCase = true)) return
+        val limit = state.value.dumpLimit
         state.value = state.value.copy(selectedDumpSerial = serial, dumps = emptyList(), loadingDumps = true)
         viewModelScope.launch {
             val root = withContext(Dispatchers.IO) { textureRoot() }
@@ -204,7 +208,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                 dumpDir.listFiles().orEmpty()
                     .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
                     .sortedByDescending { it.lastModified() }
-                    .take(120)
+                    .take(limit)
                     .map { file -> TextureDumpItem(serial, file, File(replacementDir, file.name).isFile) }
             }
             if (state.value.selectedDumpSerial.equals(serial, ignoreCase = true)) {
@@ -233,6 +237,28 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
         return MainActivityRuntime.currentGame.value?.serial
             // Survives quitting to the library, where the two sources above are both blank.
             ?: MainActivityRuntime.contextGame.value?.serial?.takeIf { it.isNotBlank() }
+    }
+
+    /** Load the next page of older dumps without decoding every game's PNGs at once. */
+    fun loadMoreDumps() {
+        val serial = state.value.selectedDumpSerial ?: return
+        val nextLimit = state.value.dumpLimit + 120
+        state.value = state.value.copy(dumpLimit = nextLimit, loadingDumps = true)
+        viewModelScope.launch {
+            val files = withContext(Dispatchers.IO) {
+                val root = textureRoot()
+                val dumpDir = File(root, "$serial/dumps")
+                val replacementDir = File(root, "$serial/replacements")
+                dumpDir.listFiles().orEmpty()
+                    .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
+                    .sortedByDescending { it.lastModified() }
+                    .take(nextLimit)
+                    .map { file -> TextureDumpItem(serial, file, File(replacementDir, file.name).isFile) }
+            }
+            if (state.value.selectedDumpSerial.equals(serial, ignoreCase = true)) {
+                state.value = state.value.copy(dumps = files, loadingDumps = false)
+            }
+        }
     }
 
     /** Toggle the core's existing runtime-only texture dump switch for the running game. */
