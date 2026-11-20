@@ -271,7 +271,11 @@ private fun TextureDumpBrowser(
                 }
                 selectedGame?.let { game ->
                     Text(
-                        "${game.serial} · ${game.fileCount} saved texture(s) · ${android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, game.totalBytes)}",
+                        str("textures.dump.gameSummary").format(
+                            game.serial,
+                            game.fileCount,
+                            android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, game.totalBytes),
+                        ),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -302,7 +306,7 @@ private fun TextureDumpBrowser(
                         )
                     } else {
                         Text(
-                            str("textures.dump.shown").format(visibleDumps.size, selectedGame?.fileCount ?: state.dumps.size),
+                            str("textures.dump.shown").format(visibleDumps.size, state.dumps.size),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
