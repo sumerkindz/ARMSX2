@@ -2,7 +2,9 @@ package com.armsx2.ui.textures
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -14,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,10 +35,16 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.armsx2.i18n.str
 import com.armsx2.ui.common.ArmsBackdrop
@@ -52,6 +61,12 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
     val state = viewModel.state.value
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let(viewModel::importFolder) }
     val archivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(viewModel::importArchive) }
+    val pendingReplacement = remember { androidx.compose.runtime.mutableStateOf<TextureDumpItem?>(null) }
+    val replacementImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        val selectedDump = pendingReplacement.value
+        if (uri != null && selectedDump != null) viewModel.importReplacementImage(selectedDump, uri)
+        pendingReplacement.value = null
+    }
     LaunchedEffect(Unit) { viewModel.refresh() }
     // Options on the left, packs on the right: the controller keeps to a column and crosses with
     // Left/Right.
@@ -106,6 +121,17 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
                     }
                 }
             }
+            Spacer(Modifier.height(12.dp))
+            TextureDumpBrowser(
+                state = state,
+                viewModel = viewModel,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                onImportImage = { item ->
+                    pendingReplacement.value = item
+                    replacementImagePicker.launch(arrayOf("image/png"))
+                },
+            )
+            Spacer(Modifier.height(16.dp))
         }
     }
     (state.error ?: state.message)?.let { message ->
@@ -115,6 +141,160 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
             onDismiss = viewModel::dismissMessage,
             idPrefix = "textures.message",
         )
+    }
+}
+
+@Composable
+private fun TextureDumpBrowser(
+    state: TextureManagerUiState,
+    viewModel: TextureManagerViewModel,
+    modifier: Modifier,
+    onImportImage: (TextureDumpItem) -> Unit,
+) {
+    GlassPanel(modifier) {
+        Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                SectionTitle("Texture Dump Browser", state.activeSerial ?: "No active game")
+                TextButton(onClick = viewModel::refresh) { Text("Refresh") }
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Button(
+                    onClick = viewModel::toggleTextureDumping,
+                    enabled = state.activeSerial != null && !state.busy,
+                ) {
+                    Text("Toggle dumping")
+                }
+                Text(
+                    when (state.dumpingEnabled) {
+                        true -> "Capture ON"
+                        false -> "Capture OFF"
+                        null -> "Runtime state unknown"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                "Dumped textures are stored per game. Import an edited PNG to create or update its replacement; the original hash filename is preserved.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (state.activeSerial == null) {
+                Text(
+                    "Start a game to browse its texture dumps.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (state.dumps.isEmpty()) {
+                Text(
+                    "No PNG dumps found for ${state.activeSerial}. Start the game, turn dumping ON, play for a while, then turn it OFF and refresh.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    "${state.dumps.size} recent dump(s) shown (maximum 120).",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    state.dumps.forEach { item ->
+                        TextureDumpRow(item = item, enabled = !state.busy, onImport = { onImportImage(item) })
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TextureDumpRow(
+    item: TextureDumpItem,
+    enabled: Boolean,
+    onImport: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.40f),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            TextureDumpThumbnail(item.file)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    item.file.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    "${item.serial} · ${android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, item.file.length())}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Text(
+                    if (item.replacementExists) "Replacement exists" else "No replacement yet",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (item.replacementExists) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Button(onClick = onImport, enabled = enabled) {
+                Text(if (item.replacementExists) "Update PNG" else "Import PNG")
+            }
+        }
+    }
+}
+
+@Composable
+private fun TextureDumpThumbnail(file: java.io.File) {
+    val thumbnail = produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, file.absolutePath, file.lastModified()) {
+        value = withContext(Dispatchers.IO) {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            val longestSide = maxOf(bounds.outWidth, bounds.outHeight)
+            val sampleSize = if (longestSide > 256) {
+                Integer.highestOneBit(longestSide / 256).coerceAtLeast(1)
+            } else {
+                1
+            }
+            val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            BitmapFactory.decodeFile(file.absolutePath, options)?.asImageBitmap()
+        }
+    }
+    Surface(
+        modifier = Modifier.size(76.dp),
+        shape = RoundedCornerShape(9.dp),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        if (thumbnail.value != null) {
+            Image(
+                bitmap = thumbnail.value!!,
+                contentDescription = file.name,
+                modifier = Modifier.fillMaxSize().padding(3.dp),
+                contentScale = ContentScale.Fit,
+            )
+        } else {
+            androidx.compose.foundation.layout.Box(
+                Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("PNG", style = MaterialTheme.typography.labelSmall)
+            }
+        }
     }
 }
 
