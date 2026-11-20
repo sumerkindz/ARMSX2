@@ -1798,7 +1798,7 @@ private val BASE_EN: Map<String, String> = mapOf(
     "textures.dump.showAll" to "Show all dumps",
     "textures.dump.onlyUnreplaced" to "Show only textures without replacements",
     "textures.dump.noMatch" to "No dumps match this search/filter.",
-    "textures.dump.shown" to "%1\$d of %2\$d recent dump(s) shown (maximum 120).",
+    "textures.dump.shown" to "Showing %1\$d of %2\$d saved dump(s) in the current list.",
     "textures.dump.loading" to "Loading saved texture dumps…",
     "textures.dump.loadMore" to "Load 120 older textures",
     "textures.dump.folderEmpty" to "No PNG dumps are available in this folder. Refresh to rescan it.",
