@@ -181,7 +181,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                 val files = directory.listFiles().orEmpty()
                     .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
                     .sortedByDescending { it.lastModified() }
-                val items = files.take(120).mapNotNull { file ->
+                val items = files.mapNotNull { file ->
                     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     BitmapFactory.decodeFile(file.absolutePath, bounds)
                     if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
@@ -199,7 +199,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     runCatching { NativeApp.isTextureDumpingEnabled() }.getOrDefault(false)
                 }
             } else {
-                state.value.settings.graphics.dumpReplaceableTextures
+                false
             }
             state.value = state.value.copy(
                 dumpSerial = serial,
