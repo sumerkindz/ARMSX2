@@ -1135,6 +1135,8 @@ public class NativeApp {
 	/** Flip texture dumping on/off live (PCSX2's ToggleTextureDumping hotkey).
 	 *  Returns the new state. Runtime-only; no-op (returns false) with no VM. */
 	public static native boolean toggleTextureDumping();
+	/** Current live texture-dump state; false when no VM is running. */
+	public static native boolean isTextureDumpingEnabled();
 
 	/** Create a memory card in the memcards folder. type: 1=File, 2=Folder.
 	 *  fileType (File only): 1=8MB, 2=16MB, 3=32MB, 4=64MB. Returns success. */
