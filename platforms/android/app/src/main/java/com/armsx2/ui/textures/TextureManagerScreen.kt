@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import com.armsx2.ui.Colors
@@ -162,6 +163,12 @@ private fun TextureDumpBrowser(
     onExportImage: (TextureDumpItem) -> Unit,
     onImportImage: (TextureDumpItem) -> Unit,
 ) {
+    val query = remember { androidx.compose.runtime.mutableStateOf("") }
+    val onlyWithoutReplacement = remember { androidx.compose.runtime.mutableStateOf(false) }
+    val visibleDumps = state.dumps.filter { item ->
+        item.file.name.contains(query.value.trim(), ignoreCase = true) &&
+            (!onlyWithoutReplacement.value || !item.replacementExists)
+    }
     GlassPanel(modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(
@@ -211,22 +218,40 @@ private fun TextureDumpBrowser(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                Text(
-                    "${state.dumps.size} recent dump(s) shown (maximum 120).",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                OutlinedTextField(
+                    value = query.value,
+                    onValueChange = { query.value = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Search texture filename / hash") },
                 )
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth().height(440.dp),
-                    verticalArrangement = Arrangement.spacedBy(7.dp),
-                ) {
-                    items(state.dumps, key = { it.file.name }) { item ->
-                        TextureDumpRow(
-                            item = item,
-                            enabled = !state.busy,
-                            onExport = { onExportImage(item) },
-                            onImport = { onImportImage(item) },
-                        )
+                TextButton(onClick = { onlyWithoutReplacement.value = !onlyWithoutReplacement.value }) {
+                    Text(if (onlyWithoutReplacement.value) "Show all dumps" else "Show only textures without replacements")
+                }
+                if (visibleDumps.isEmpty()) {
+                    Text(
+                        "No dumps match this search/filter.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Text(
+                        "${visibleDumps.size} of ${state.dumps.size} recent dump(s) shown (maximum 120).",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().height(440.dp),
+                        verticalArrangement = Arrangement.spacedBy(7.dp),
+                    ) {
+                        items(visibleDumps, key = { it.file.name }) { item ->
+                            TextureDumpRow(
+                                item = item,
+                                enabled = !state.busy,
+                                onExport = { onExportImage(item) },
+                                onImport = { onImportImage(item) },
+                            )
+                        }
                     }
                 }
             }
