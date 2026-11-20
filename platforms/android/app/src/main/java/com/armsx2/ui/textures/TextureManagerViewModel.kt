@@ -1,7 +1,6 @@
 package com.armsx2.ui.textures
 
 import android.app.Application
-import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
@@ -136,6 +135,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                 librarySerials = scanned.third,
                 activeSerial = runtimeSerial(),
             )
+            refreshDumps()
         }
     }
 
@@ -168,7 +168,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
      * normalized or regenerated here.
      */
     fun refreshDumps() {
-        val serial = (state.value.activeSerial ?: runtimeSerial())?.takeIf(String::isNotBlank)
+        val serial = (runtimeSerial() ?: state.value.activeSerial)?.takeIf(String::isNotBlank)
         if (serial == null) {
             state.value = state.value.copy(dumpSerial = null, dumpItems = emptyList(), dumpTotalCount = 0, dumpEnabled = false, dumpBusy = false)
             return
@@ -265,7 +265,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
         viewModelScope.launch {
             val failure = withContext(Dispatchers.IO) {
                 runCatching {
-                    val expectedDumpDir = File(textureRoot(), "§{item.serial}/dumps").canonicalFile
+                    val expectedDumpDir = File(textureRoot(), "${item.serial}/dumps").canonicalFile
                     require(item.file.canonicalFile.parentFile == expectedDumpDir) { "Invalid texture dump path." }
                     require(item.file.isFile && item.file.extension.equals("png", ignoreCase = true)) {
                         "The selected texture dump is no longer available."
@@ -283,12 +283,12 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     val bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
                         ?: error("The selected image could not be decoded.")
                     try {
-                        val replacements = File(textureRoot(), "§{item.serial}/replacements")
+                        val replacements = File(textureRoot(), "${item.serial}/replacements")
                         require(replacements.mkdirs() || replacements.isDirectory) {
                             "Could not create the replacements folder."
                         }
                         val destination = File(replacements, item.file.name)
-                        val temporary = File(replacements, ".§{item.file.name}.importing")
+                        val temporary = File(replacements, ".${item.file.name}.importing")
                         val written = FileOutputStream(temporary).use { output ->
                             bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
                         }
@@ -310,7 +310,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                 reloadCore()
                 state.value = state.value.copy(
                     dumpBusy = false,
-                    message = "Replacement saved as §{item.file.name}. Restart the game to ensure it is loaded.",
+                    message = "Replacement saved as ${item.file.name}. Restart the game to ensure it is loaded.",
                 )
             } else {
                 state.value = state.value.copy(dumpBusy = false, error = "Import failed: $failure")
