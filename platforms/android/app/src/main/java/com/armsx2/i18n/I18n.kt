@@ -1800,6 +1800,7 @@ private val BASE_EN: Map<String, String> = mapOf(
     "textures.dump.noMatch" to "No dumps match this search/filter.",
     "textures.dump.shown" to "%1\$d of %2\$d recent dump(s) shown (maximum 120).",
     "textures.dump.loading" to "Loading saved texture dumps…",
+    "textures.dump.loadMore" to "Load 120 older textures",
     "textures.dump.folderEmpty" to "No PNG dumps are available in this folder. Refresh to rescan it.",
     "textures.dump.gameSummary" to "%1\$s · %2\$d saved texture(s) · %3\$s",
     "textures.dump.export" to "Export",
