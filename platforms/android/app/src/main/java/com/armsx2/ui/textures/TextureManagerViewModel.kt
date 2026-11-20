@@ -36,10 +36,19 @@ data class TextureDumpItem(
     val replacementExists: Boolean,
 )
 
+data class TextureDumpGame(
+    val serial: String,
+    val fileCount: Int,
+    val totalBytes: Long,
+    val gameTitle: String? = null,
+)
+
 data class TextureManagerUiState(
     val settings: Settings = Settings(),
     val packs: List<TexturePackItem> = emptyList(),
     val activeSerial: String? = null,
+    val dumpGames: List<TextureDumpGame> = emptyList(),
+    val selectedDumpSerial: String? = null,
     val dumps: List<TextureDumpItem> = emptyList(),
     val dumpingEnabled: Boolean? = null,
     /** Serials in the user's ROM library, upper-cased. Read from the scan cache, never scanned here. */
@@ -55,6 +64,8 @@ private data class TextureManagerScanResult(
     val settings: Settings,
     val librarySerials: Set<String>,
     val activeSerial: String?,
+    val dumpGames: List<TextureDumpGame>,
+    val selectedDumpSerial: String?,
     val dumps: List<TextureDumpItem>,
 )
 
@@ -72,6 +83,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
      */
     fun refresh() {
         val activeSerial = runtimeSerial()
+        val requestedDumpSerial = state.value.selectedDumpSerial
         viewModelScope.launch {
             val scanned = withContext(Dispatchers.IO) {
                 val root = textureRoot().apply { mkdirs() }
@@ -81,11 +93,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     val replacements = File(serialDir, "replacements")
                     if (!replacements.isDirectory) return@mapNotNull null
                     // Sizes come from a CACHE, not a fresh walk. Walking every pack's tree on every
-                    // open is what made this screen hang: a real pack is thousands of files (DBZ
-                    // BT3: 4277), so ~60 installed packs is a quarter of a million stat() calls
-                    // before the first frame — reported as "opening the texture packs menu freezes
-                    // the app, sometimes I have to close it". The cache is keyed on the folder's
-                    // mtime, so a pack that changed is re-measured and everything else is free.
+                    // open made the Texture Manager freeze when a user had many large packs.
                     val cached = PackSizeCache.get(serialDir.name, replacements.lastModified())
                     val (count, bytes) = cached ?: run {
                         var c = 0
@@ -99,41 +107,48 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     TexturePackItem(serialDir.name, replacements, count, bytes)
                 }
 
-                // The install record is a JSON file that can drift from the filesystem: deleting a
-                // pack in a file manager, or a delete that only partly succeeded, used to leave the
-                // catalogue entry greyed out as "Installed" forever, which also blocked reinstalling
-                // or switching packs for that game. Reconcile against what is actually on disk.
                 TexturePackInstallState.reconcile(packs.map { it.serial.uppercase() }.toSet())
-
                 val settings = ConfigStore.loadGlobal()
-                // Cached scan results only — loadCached() reads the stored list, it does not walk
-                // storage. Without this the catalogue's "your games" grouping only knew about games
-                // that already had a pack or had been launched this session, so an owned game sat
-                // under "Other games" until you played it once (reported by Beep).
-                // Titles come off the same cached list, so naming the packs costs nothing extra.
                 val cachedGames = runCatching {
                     GameLibraryRepository(getApplication()).loadCached().games
                 }.getOrDefault(emptyList())
                 val library = cachedGames
                     .mapNotNull { it.serial?.takeIf(String::isNotBlank)?.uppercase() }
                     .toSet()
-                // displayTitle, not title — so a game the user renamed shows the name they gave it,
-                // matching the library list rather than contradicting it.
                 val forceEn = com.armsx2.EnglishTitles.enabled.value
                 val titles = cachedGames.mapNotNull { g ->
-                    val s = g.serial?.takeIf(String::isNotBlank)?.uppercase() ?: return@mapNotNull null
-                    g.displayTitle(forceEn).takeIf(String::isNotBlank)?.let { s to it }
+                    val serial = g.serial?.takeIf(String::isNotBlank)?.uppercase() ?: return@mapNotNull null
+                    g.displayTitle(forceEn).takeIf(String::isNotBlank)?.let { serial to it }
                 }.toMap()
 
-                // Sort by game name so packs read like the library does, falling back to the serial
-                // for anything the library can't name (which also keeps the order stable).
                 val named = packs
                     .map { it.copy(gameTitle = titles[it.serial.uppercase()]) }
                     .sortedBy { (it.gameTitle ?: it.serial).lowercase() }
 
-                // Texture dumps are separate from installed replacements. Keep their original
-                // filenames: the filename is the GS hash used by the replacement loader.
-                val dumps = activeSerial?.let { serial ->
+                // Search every existing game dump folder, not only the currently running game.
+                // This keeps previously captured textures available for later editing.
+                val dumpGames = serialDirs.mapNotNull { serialDir ->
+                    val dumpDir = File(serialDir, "dumps")
+                    if (!dumpDir.isDirectory) return@mapNotNull null
+                    val pngs = dumpDir.listFiles().orEmpty().filter {
+                        it.isFile && it.extension.equals("png", ignoreCase = true)
+                    }
+                    if (pngs.isEmpty()) return@mapNotNull null
+                    TextureDumpGame(
+                        serial = serialDir.name,
+                        fileCount = pngs.size,
+                        totalBytes = pngs.sumOf { it.length() },
+                        gameTitle = titles[serialDir.name.uppercase()],
+                    )
+                }.sortedBy { (it.gameTitle ?: it.serial).lowercase() }
+
+                val selectedSerial = dumpGames.firstOrNull {
+                    it.serial.equals(activeSerial, ignoreCase = true)
+                }?.serial ?: dumpGames.firstOrNull {
+                    it.serial.equals(requestedDumpSerial, ignoreCase = true)
+                }?.serial ?: dumpGames.firstOrNull()?.serial
+
+                val selectedDumpItems = selectedSerial?.let { serial ->
                     val dumpDir = File(root, "$serial/dumps")
                     val replacementDir = File(root, "$serial/replacements")
                     dumpDir.listFiles().orEmpty()
@@ -143,16 +158,46 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                         .map { file -> TextureDumpItem(serial, file, File(replacementDir, file.name).isFile) }
                 }.orEmpty()
 
-                TextureManagerScanResult(named, settings, library, activeSerial, dumps)
+                TextureManagerScanResult(
+                    packs = named,
+                    settings = settings,
+                    librarySerials = library,
+                    activeSerial = activeSerial,
+                    dumpGames = dumpGames,
+                    selectedDumpSerial = selectedSerial,
+                    dumps = selectedDumpItems,
+                )
             }
             state.value = state.value.copy(
                 settings = scanned.settings,
                 packs = scanned.packs,
                 librarySerials = scanned.librarySerials,
                 activeSerial = scanned.activeSerial,
+                dumpGames = scanned.dumpGames,
+                selectedDumpSerial = scanned.selectedDumpSerial,
                 dumps = scanned.dumps,
                 dumpingEnabled = if (state.value.activeSerial == scanned.activeSerial) state.value.dumpingEnabled else null,
             )
+        }
+    }
+
+    fun selectDumpGame(serial: String) {
+        if (state.value.selectedDumpSerial.equals(serial, ignoreCase = true)) return
+        state.value = state.value.copy(selectedDumpSerial = serial, dumps = emptyList())
+        viewModelScope.launch {
+            val root = withContext(Dispatchers.IO) { textureRoot() }
+            val files = withContext(Dispatchers.IO) {
+                val dumpDir = File(root, "$serial/dumps")
+                val replacementDir = File(root, "$serial/replacements")
+                dumpDir.listFiles().orEmpty()
+                    .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
+                    .sortedByDescending { it.lastModified() }
+                    .take(120)
+                    .map { file -> TextureDumpItem(serial, file, File(replacementDir, file.name).isFile) }
+            }
+            if (state.value.selectedDumpSerial.equals(serial, ignoreCase = true)) {
+                state.value = state.value.copy(dumps = files)
+            }
         }
     }
 
