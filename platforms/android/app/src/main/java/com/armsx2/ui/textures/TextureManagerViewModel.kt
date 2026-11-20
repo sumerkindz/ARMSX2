@@ -92,6 +92,10 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
         val activeSerial = runtimeSerial()
         val requestedDumpSerial = state.value.selectedDumpSerial
         val requestedDumpLimit = state.value.dumpLimit
+        // The persisted setting can be stale after the in-game hotkey changes the runtime switch.
+        val canReadRuntimeDumpState = activeSerial != null &&
+            MainActivityRuntime.nativeReady.value &&
+            MainActivityRuntime.eState.value != com.armsx2.EmuState.STOPPED
         viewModelScope.launch {
             val scanned = withContext(Dispatchers.IO) {
                 val root = textureRoot().apply { mkdirs() }
@@ -178,6 +182,11 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     dumps = selectedDumpItems,
                 )
             }
+            val liveDumpingEnabled = if (canReadRuntimeDumpState) {
+                runCatching {
+                    withContext(Dispatchers.IO) { NativeApp.isTextureDumpingEnabled() }
+                }.getOrNull()
+            } else null
             state.value = state.value.copy(
                 settings = scanned.settings,
                 packs = scanned.packs,
@@ -187,7 +196,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                 selectedDumpSerial = scanned.selectedDumpSerial,
                 dumps = scanned.dumps,
                 loadingDumps = false,
-                dumpingEnabled = if (state.value.activeSerial == scanned.activeSerial && state.value.dumpingEnabled != null) {
+                dumpingEnabled = liveDumpingEnabled ?: if (state.value.activeSerial == scanned.activeSerial && state.value.dumpingEnabled != null) {
                     state.value.dumpingEnabled
                 } else {
                     scanned.settings.graphics.dumpReplaceableTextures.takeIf { scanned.activeSerial != null }
