@@ -1948,6 +1948,19 @@ Java_kr_co_iefriends_pcsx2_NativeApp_toggleTextureDumping(JNIEnv *env, jclass cl
 
 extern "C"
 JNIEXPORT jboolean JNICALL
+Java_kr_co_iefriends_pcsx2_NativeApp_isTextureDumpingEnabled(JNIEnv *env, jclass clazz) {
+    if (!VMManager::HasValidVM())
+        return JNI_FALSE;
+
+    bool enabled = false;
+    Host::RunOnCPUThread([&enabled]() {
+        enabled = EmuConfig.GS.DumpReplaceableTextures;
+    }, /*block=*/true);
+    return enabled ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
 Java_kr_co_iefriends_pcsx2_NativeApp_createMemoryCard(JNIEnv *env, jclass clazz,
                                                       jstring p_name, jint p_type, jint p_fileType) {
     // Create a new PS2 memory card in EmuFolders::MemoryCards. type:

@@ -8,10 +8,16 @@ import androidx.lifecycle.viewModelScope
 import com.armsx2.TexturePackInstallState
 import com.armsx2.TexturePackInstaller
 import com.armsx2.data.library.GameLibraryRepository
+import com.armsx2.i18n.I18n
 import com.armsx2.runtime.MainActivityRuntime
 import com.armsx2.config.ConfigStore
 import com.armsx2.config.Settings
+import java.io.BufferedOutputStream
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,16 +34,46 @@ data class TexturePackItem(
     val gameTitle: String? = null,
 )
 
+data class TextureDumpItem(
+    val serial: String,
+    val file: File,
+    val replacementExists: Boolean,
+)
+
+data class TextureDumpGame(
+    val serial: String,
+    val fileCount: Int,
+    val totalBytes: Long,
+    val gameTitle: String? = null,
+)
+
 data class TextureManagerUiState(
     val settings: Settings = Settings(),
     val packs: List<TexturePackItem> = emptyList(),
     val activeSerial: String? = null,
+    val dumpGames: List<TextureDumpGame> = emptyList(),
+    val selectedDumpSerial: String? = null,
+    val dumps: List<TextureDumpItem> = emptyList(),
+    val loadingDumps: Boolean = false,
+    /** Incremental cap keeps thumbnail decoding bounded on Android. */
+    val dumpLimit: Int = 120,
+    val dumpingEnabled: Boolean? = null,
     /** Serials in the user's ROM library, upper-cased. Read from the scan cache, never scanned here. */
     val librarySerials: Set<String> = emptySet(),
     val busy: Boolean = false,
     val progress: Int = 0,
     val message: String? = null,
     val error: String? = null,
+)
+
+private data class TextureManagerScanResult(
+    val packs: List<TexturePackItem>,
+    val settings: Settings,
+    val librarySerials: Set<String>,
+    val activeSerial: String?,
+    val dumpGames: List<TextureDumpGame>,
+    val selectedDumpSerial: String?,
+    val dumps: List<TextureDumpItem>,
 )
 
 class TextureManagerViewModel(application: Application) : AndroidViewModel(application) {
@@ -53,6 +89,13 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
      * "the texture packs menu hangs and I have to close the app" was.
      */
     fun refresh() {
+        val activeSerial = runtimeSerial()
+        val requestedDumpSerial = state.value.selectedDumpSerial
+        val requestedDumpLimit = state.value.dumpLimit
+        // The persisted setting can be stale after the in-game hotkey changes the runtime switch.
+        val canReadRuntimeDumpState = activeSerial != null &&
+            MainActivityRuntime.nativeReady.value &&
+            MainActivityRuntime.eState.value != com.armsx2.EmuState.STOPPED
         viewModelScope.launch {
             val scanned = withContext(Dispatchers.IO) {
                 val root = textureRoot().apply { mkdirs() }
@@ -62,11 +105,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     val replacements = File(serialDir, "replacements")
                     if (!replacements.isDirectory) return@mapNotNull null
                     // Sizes come from a CACHE, not a fresh walk. Walking every pack's tree on every
-                    // open is what made this screen hang: a real pack is thousands of files (DBZ
-                    // BT3: 4277), so ~60 installed packs is a quarter of a million stat() calls
-                    // before the first frame — reported as "opening the texture packs menu freezes
-                    // the app, sometimes I have to close it". The cache is keyed on the folder's
-                    // mtime, so a pack that changed is re-measured and everything else is free.
+                    // open made the Texture Manager freeze when a user had many large packs.
                     val cached = PackSizeCache.get(serialDir.name, replacements.lastModified())
                     val (count, bytes) = cached ?: run {
                         var c = 0
@@ -80,46 +119,110 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     TexturePackItem(serialDir.name, replacements, count, bytes)
                 }
 
-                // The install record is a JSON file that can drift from the filesystem: deleting a
-                // pack in a file manager, or a delete that only partly succeeded, used to leave the
-                // catalogue entry greyed out as "Installed" forever, which also blocked reinstalling
-                // or switching packs for that game. Reconcile against what is actually on disk.
                 TexturePackInstallState.reconcile(packs.map { it.serial.uppercase() }.toSet())
-
                 val settings = ConfigStore.loadGlobal()
-                // Cached scan results only — loadCached() reads the stored list, it does not walk
-                // storage. Without this the catalogue's "your games" grouping only knew about games
-                // that already had a pack or had been launched this session, so an owned game sat
-                // under "Other games" until you played it once (reported by Beep).
-                // Titles come off the same cached list, so naming the packs costs nothing extra.
                 val cachedGames = runCatching {
                     GameLibraryRepository(getApplication()).loadCached().games
                 }.getOrDefault(emptyList())
                 val library = cachedGames
                     .mapNotNull { it.serial?.takeIf(String::isNotBlank)?.uppercase() }
                     .toSet()
-                // displayTitle, not title — so a game the user renamed shows the name they gave it,
-                // matching the library list rather than contradicting it.
                 val forceEn = com.armsx2.EnglishTitles.enabled.value
                 val titles = cachedGames.mapNotNull { g ->
-                    val s = g.serial?.takeIf(String::isNotBlank)?.uppercase() ?: return@mapNotNull null
-                    g.displayTitle(forceEn).takeIf(String::isNotBlank)?.let { s to it }
+                    val serial = g.serial?.takeIf(String::isNotBlank)?.uppercase() ?: return@mapNotNull null
+                    g.displayTitle(forceEn).takeIf(String::isNotBlank)?.let { serial to it }
                 }.toMap()
 
-                // Sort by game name so packs read like the library does, falling back to the serial
-                // for anything the library can't name (which also keeps the order stable).
                 val named = packs
                     .map { it.copy(gameTitle = titles[it.serial.uppercase()]) }
                     .sortedBy { (it.gameTitle ?: it.serial).lowercase() }
 
-                Triple(named, settings, library)
+                // Search every existing game dump folder, not only the currently running game.
+                // This keeps previously captured textures available for later editing.
+                val dumpGames = serialDirs.mapNotNull { serialDir ->
+                    val dumpDir = File(serialDir, "dumps")
+                    if (!dumpDir.isDirectory) return@mapNotNull null
+                    val pngs = dumpDir.listFiles().orEmpty().filter {
+                        it.isFile && it.extension.equals("png", ignoreCase = true)
+                    }
+                    if (pngs.isEmpty()) return@mapNotNull null
+                    TextureDumpGame(
+                        serial = serialDir.name,
+                        fileCount = pngs.size,
+                        totalBytes = pngs.sumOf { it.length() },
+                        gameTitle = titles[serialDir.name.uppercase()],
+                    )
+                }.sortedBy { (it.gameTitle ?: it.serial).lowercase() }
+
+                // Preserve the folder the user selected. On first open there is no prior
+                // selection, so prefer the running game's dumps, then the first available game.
+                val selectedSerial = dumpGames.firstOrNull {
+                    it.serial.equals(requestedDumpSerial, ignoreCase = true)
+                }?.serial ?: dumpGames.firstOrNull {
+                    it.serial.equals(activeSerial, ignoreCase = true)
+                }?.serial ?: dumpGames.firstOrNull()?.serial
+
+                val selectedDumpItems = selectedSerial?.let { serial ->
+                    val dumpDir = File(root, "$serial/dumps")
+                    val replacementDir = File(root, "$serial/replacements")
+                    dumpDir.listFiles().orEmpty()
+                        .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
+                        .sortedByDescending { it.lastModified() }
+                        .take(requestedDumpLimit)
+                        .map { file -> TextureDumpItem(serial, file, File(replacementDir, file.name).isFile) }
+                }.orEmpty()
+
+                TextureManagerScanResult(
+                    packs = named,
+                    settings = settings,
+                    librarySerials = library,
+                    activeSerial = activeSerial,
+                    dumpGames = dumpGames,
+                    selectedDumpSerial = selectedSerial,
+                    dumps = selectedDumpItems,
+                )
             }
+            val liveDumpingEnabled = if (canReadRuntimeDumpState) {
+                runCatching {
+                    withContext(Dispatchers.IO) { NativeApp.isTextureDumpingEnabled() }
+                }.getOrNull()
+            } else null
             state.value = state.value.copy(
-                settings = scanned.second,
-                packs = scanned.first,
-                librarySerials = scanned.third,
-                activeSerial = runtimeSerial(),
+                settings = scanned.settings,
+                packs = scanned.packs,
+                librarySerials = scanned.librarySerials,
+                activeSerial = scanned.activeSerial,
+                dumpGames = scanned.dumpGames,
+                selectedDumpSerial = scanned.selectedDumpSerial,
+                dumps = scanned.dumps,
+                loadingDumps = false,
+                dumpingEnabled = liveDumpingEnabled ?: if (state.value.activeSerial == scanned.activeSerial && state.value.dumpingEnabled != null) {
+                    state.value.dumpingEnabled
+                } else {
+                    scanned.settings.graphics.dumpReplaceableTextures.takeIf { scanned.activeSerial != null }
+                },
             )
+        }
+    }
+
+    fun selectDumpGame(serial: String) {
+        if (state.value.selectedDumpSerial.equals(serial, ignoreCase = true)) return
+        val limit = state.value.dumpLimit
+        state.value = state.value.copy(selectedDumpSerial = serial, dumps = emptyList(), loadingDumps = true)
+        viewModelScope.launch {
+            val root = withContext(Dispatchers.IO) { textureRoot() }
+            val files = withContext(Dispatchers.IO) {
+                val dumpDir = File(root, "$serial/dumps")
+                val replacementDir = File(root, "$serial/replacements")
+                dumpDir.listFiles().orEmpty()
+                    .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
+                    .sortedByDescending { it.lastModified() }
+                    .take(limit)
+                    .map { file -> TextureDumpItem(serial, file, File(replacementDir, file.name).isFile) }
+            }
+            if (state.value.selectedDumpSerial.equals(serial, ignoreCase = true)) {
+                state.value = state.value.copy(dumps = files, loadingDumps = false)
+            }
         }
     }
 
@@ -143,6 +246,175 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
         return MainActivityRuntime.currentGame.value?.serial
             // Survives quitting to the library, where the two sources above are both blank.
             ?: MainActivityRuntime.contextGame.value?.serial?.takeIf { it.isNotBlank() }
+    }
+
+    /** Load the next page of older dumps without decoding every game's PNGs at once. */
+    fun loadMoreDumps() {
+        val serial = state.value.selectedDumpSerial ?: return
+        val nextLimit = state.value.dumpLimit + 120
+        state.value = state.value.copy(dumpLimit = nextLimit, loadingDumps = true)
+        viewModelScope.launch {
+            val files = withContext(Dispatchers.IO) {
+                val root = textureRoot()
+                val dumpDir = File(root, "$serial/dumps")
+                val replacementDir = File(root, "$serial/replacements")
+                dumpDir.listFiles().orEmpty()
+                    .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
+                    .sortedByDescending { it.lastModified() }
+                    .take(nextLimit)
+                    .map { file -> TextureDumpItem(serial, file, File(replacementDir, file.name).isFile) }
+            }
+            if (state.value.selectedDumpSerial.equals(serial, ignoreCase = true)) {
+                state.value = state.value.copy(dumps = files, loadingDumps = false)
+            }
+        }
+    }
+
+    /** Toggle the core's existing runtime-only texture dump switch for the running game. */
+    fun toggleTextureDumping() {
+        if (!MainActivityRuntime.nativeReady.value ||
+            MainActivityRuntime.eState.value == com.armsx2.EmuState.STOPPED
+        ) {
+            state.value = state.value.copy(error = I18n.get("textures.dump.startGame"))
+            return
+        }
+        val liveSerial = runCatching { NativeApp.getGameSerial() }.getOrNull()
+        if (liveSerial.isNullOrBlank()) {
+            state.value = state.value.copy(error = "Start a game before enabling texture dumping.")
+            return
+        }
+        val enabled = runCatching { NativeApp.toggleTextureDumping() }.getOrElse {
+            state.value = state.value.copy(error = "Unable to toggle texture dumping: ${it.message ?: "native error"}")
+            return
+        }
+        state.value = state.value.copy(
+            dumpingEnabled = enabled,
+            message = if (enabled) I18n.get("textures.dump.enabled")
+                else I18n.get("textures.dump.disabled"),
+        )
+    }
+
+    /** Copy a dump to a user-selected location so it can be edited by another Android app. */
+    fun exportDump(item: TextureDumpItem, uri: Uri) {
+        val context = getApplication<Application>()
+        state.value = state.value.copy(busy = true, progress = 0, message = null, error = null)
+        viewModelScope.launch {
+            val exported = withContext(Dispatchers.IO) {
+                runCatching {
+                    check(item.file.isFile) { I18n.get("textures.dump.fileMissing") }
+                    val output = context.contentResolver.openOutputStream(uri)
+                        ?: error(I18n.get("textures.dump.destinationFailed"))
+                    output.use { destination ->
+                        item.file.inputStream().use { input -> input.copyTo(destination) }
+                    }
+                    true
+                }.getOrDefault(false)
+            }
+            state.value = state.value.copy(
+                busy = false,
+                message = if (exported) I18n.get("textures.dump.exported").format(item.file.name)
+                    else null,
+                error = if (exported) null else I18n.get("textures.dump.exportFailed"),
+            )
+        }
+    }
+
+    /**
+     * Import an edited PNG for a dumped texture. The output filename is deliberately taken from
+     * the dump, not the picked image: that name contains the PS2 texture hash the core matches.
+     */
+    fun importReplacementImage(item: TextureDumpItem, uri: Uri) {
+        val context = getApplication<Application>()
+        state.value = state.value.copy(busy = true, progress = 0, message = null, error = null)
+        viewModelScope.launch {
+            val imported = withContext(Dispatchers.IO) {
+                val root = textureRoot().canonicalFile
+                val gameDir = File(root, item.serial).canonicalFile
+                val dumpDir = File(gameDir, "dumps").canonicalFile
+                val sourceDump = item.file.canonicalFile
+                val replacementDir = File(gameDir, "replacements").canonicalFile
+                val target = File(replacementDir, sourceDump.name)
+                val temporary = File(replacementDir, sourceDump.name + ".importing")
+                runCatching {
+                    check(gameDir.parentFile == root) { "Invalid game texture folder." }
+                    check(sourceDump.parentFile == dumpDir && sourceDump.isFile) {
+                        "The selected texture dump no longer exists."
+                    }
+                    if (!replacementDir.exists()) check(replacementDir.mkdirs()) {
+                        "Unable to create the replacements folder."
+                    }
+                    check(replacementDir.isDirectory && replacementDir.parentFile == gameDir) {
+                        "Invalid replacements folder."
+                    }
+                    temporary.delete()
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        temporary.outputStream().use(input::copyTo)
+                    } ?: error(I18n.get("textures.dump.destinationFailed"))
+                    val pngSignature = byteArrayOf(
+                        0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                    )
+                    val isPng = temporary.inputStream().use { stream ->
+                        val header = ByteArray(8)
+                        var offset = 0
+                        while (offset < header.size) {
+                            val read = stream.read(header, offset, header.size - offset)
+                            if (read <= 0) break
+                            offset += read
+                        }
+                        offset == header.size && header.contentEquals(pngSignature)
+                    }
+                    check(isPng) { I18n.get("textures.dump.choosePng") }
+
+                    // A PNG signature alone does not prove that the full image is decodable. Check
+                    // its dimensions and decode a downsampled copy before replacing a working file.
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeFile(temporary.absolutePath, bounds)
+                    check(bounds.outWidth > 0 && bounds.outHeight > 0) { I18n.get("textures.dump.invalidPng") }
+                    check(bounds.outWidth <= 16384 && bounds.outHeight <= 16384) {
+                        I18n.get("textures.dump.pngLimit")
+                    }
+                    val sampleSize = Integer.highestOneBit(
+                        maxOf(bounds.outWidth, bounds.outHeight) / 512
+                    ).coerceAtLeast(1)
+                    val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                    }
+                    val validationBitmap =
+                        android.graphics.BitmapFactory.decodeFile(temporary.absolutePath, decodeOptions)
+                            ?: error(I18n.get("textures.dump.invalidPng"))
+                    validationBitmap.recycle()
+
+                    runCatching {
+                        Files.move(
+                            temporary.toPath(),
+                            target.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING,
+                            StandardCopyOption.ATOMIC_MOVE,
+                        )
+                    }.getOrElse {
+                        Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+                    }
+                    true
+                }.getOrElse {
+                    temporary.delete()
+                    false
+                }
+            }
+            state.value = state.value.copy(
+                busy = false,
+                message = if (imported) I18n.get("textures.dump.imported").format(item.file.name, item.serial)
+                    else null,
+                error = if (imported) null else I18n.get("textures.dump.importFailed"),
+            )
+            if (imported) {
+                if (!ConfigStore.loadGlobal().graphics.loadTextureReplacements) {
+                    update { it.copy(graphics = it.graphics.copy(loadTextureReplacements = true)) }
+                }
+                val liveSerial = runCatching { NativeApp.getGameSerial() }.getOrNull()
+                if (item.serial.equals(liveSerial, ignoreCase = true)) reloadCore()
+                refresh()
+            }
+        }
     }
 
     fun update(transform: (Settings) -> Settings) {
@@ -224,6 +496,64 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
             }
             if (outcome.ok) reloadCore()
             refresh()
+        }
+    }
+
+    /** Create a portable ZIP pack from an installed replacements folder. */
+    fun exportPack(pack: TexturePackItem, uri: Uri) {
+        val context = getApplication<Application>()
+        state.value = state.value.copy(busy = true, progress = 0, message = null, error = null)
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val root = textureRoot().canonicalFile
+                    val replacementDir = pack.directory.canonicalFile
+                    val gameDir = replacementDir.parentFile
+                        ?: error("Invalid texture pack folder.")
+                    check(replacementDir.name == "replacements" && gameDir.parentFile == root) {
+                        "The selected pack is outside the emulator texture folder."
+                    }
+                    check(gameDir.name.equals(pack.serial, ignoreCase = true)) {
+                        "The selected pack serial does not match its folder."
+                    }
+
+                    val files = replacementDir.walkTopDown().filter { it.isFile }.toList()
+                    check(files.isNotEmpty()) { "There are no replacement files to export." }
+                    val output = context.contentResolver.openOutputStream(uri)
+                        ?: error("Unable to open the ZIP destination.")
+                    ZipOutputStream(BufferedOutputStream(output)).use { zip ->
+                        files.forEachIndexed { index, file ->
+                            val canonical = file.canonicalFile
+                            check(canonical.path.startsWith(replacementDir.path + File.separator)) {
+                                "A pack file points outside the replacements folder."
+                            }
+                            val entryName = canonical.relativeTo(replacementDir).path
+                                .replace(File.separatorChar, '/')
+                            check(entryName.isNotBlank() && !entryName.startsWith("/") &&
+                                entryName.split('/').none { it == ".." }
+                            ) { "Invalid ZIP entry path." }
+
+                            zip.putNextEntry(ZipEntry(entryName))
+                            canonical.inputStream().buffered().use { input -> input.copyTo(zip) }
+                            zip.closeEntry()
+                            if ((index + 1) % 25 == 0 || index == files.lastIndex) {
+                                state.value = state.value.copy(progress = index + 1)
+                            }
+                        }
+                    }
+                    files.size
+                }.fold(
+                    onSuccess = { it to null },
+                    onFailure = { null to (it.message ?: "Unable to export the texture pack.") },
+                )
+            }
+            val (count, failure) = result
+            state.value = state.value.copy(
+                busy = false,
+                progress = 0,
+                message = count?.let { "Exported " + it + " texture file(s) as " + pack.serial + ".zip." },
+                error = failure,
+            )
         }
     }
 

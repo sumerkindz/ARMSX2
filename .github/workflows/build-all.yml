@@ -21,21 +21,12 @@
 # EE fork in pcsx2/CMakeLists.txt) -- never grafted unguarded into shared files.
 name: Build All Platforms
 
+# The all-platform pipeline is reserved for the upstream project.
+# Fork development uses the dedicated Android APK workflow instead.
 on:
   push:
     branches:
       - master
-    # Doc-only pushes shouldn't burn ~2h of arm64 CI.
-    paths-ignore:
-      - '**/*.md'
-      - 'LICENSE*'
-      - '.gitignore'
-  pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'LICENSE*'
-      - '.gitignore'
-  workflow_dispatch:
 
 concurrency:
   group: build-all-${{ github.ref }}
@@ -44,6 +35,7 @@ concurrency:
 jobs:
   # ---- PC arm64 Qt GUI (mac / linux) -------------------------------------
   pc-macos-arm64:
+    if: github.repository == 'ARMSX2/ARMSX2'
     name: PC · macOS arm64 (Qt)
     uses: ./.github/workflows/macos_build.yml
     with:
@@ -54,6 +46,7 @@ jobs:
     secrets: inherit
 
   pc-linux-arm64:
+    if: github.repository == 'ARMSX2/ARMSX2'
     name: PC · Linux arm64 (Qt)
     strategy:
       fail-fast: false
@@ -79,6 +72,7 @@ jobs:
 
   # ---- libretro core (linux arm64) ---------------------------------------
   pc-linux-arm64-libretro:
+    if: github.repository == 'ARMSX2/ARMSX2'
     name: PC · Linux arm64 (libretro core)
     uses: ./.github/workflows/linux_build_libretro.yml
     with:
@@ -89,6 +83,7 @@ jobs:
 
   # ---- SDL/kmsdrm handheld frontend (linux arm64) ------------------------
   pc-linux-arm64-sdl:
+    if: github.repository == 'ARMSX2/ARMSX2'
     name: PC · Linux arm64 (SDL kmsdrm)
     uses: ./.github/workflows/linux_build_sdl.yml
     with:
@@ -99,6 +94,7 @@ jobs:
 
   # ---- PC arm64 Qt GUI (windows) -----------------------------------------
   pc-windows-arm64:
+    if: github.repository == 'ARMSX2/ARMSX2'
     name: PC · Windows arm64 (Qt)
     uses: ./.github/workflows/windows_build_qt.yml
     with:
@@ -107,6 +103,7 @@ jobs:
 
   # ---- Android APK -------------------------------------------------------
   android:
+    if: github.repository == 'ARMSX2/ARMSX2'
     name: Android APK
     runs-on: ubuntu-24.04
     # Non-blocking until the collapsed-core Android build first goes green.
@@ -161,6 +158,7 @@ jobs:
 
   # ---- iOS .app ----------------------------------------------------------
   ios:
+    if: github.repository == 'ARMSX2/ARMSX2'
     name: iOS (arm64, unsigned device IPA)
     runs-on: macos-26
     steps:
@@ -290,6 +288,7 @@ jobs:
   # `needs` below does not name and so cannot trip `failure()`. GitHub also
   # emails the pusher natively; this adds a Discord ping to the shared channel.
   notify-failure:
+    if: github.repository == 'ARMSX2/ARMSX2'
     name: Notify on master build failure
     needs: [pc-macos-arm64, pc-linux-arm64, pc-windows-arm64]
     if: ${{ failure() && github.event_name == 'push' }}

@@ -7,6 +7,13 @@ pluginManagement {
                 includeGroupByRegex("androidx.*")
             }
         }
+        // Use the Maven Central CDN directly as the primary endpoint. The canonical
+        // mavenCentral() shorthand resolves through repo.maven.apache.org; some CI
+        // runner routes can return false 404s for a broad set of published artifacts.
+        maven {
+            name = "MavenCentralCDN"
+            url = uri("https://repo1.maven.org/maven2")
+        }
         mavenCentral()
         gradlePluginPortal()
     }
@@ -18,6 +25,11 @@ dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
         google()
+        // Direct Maven Central CDN endpoint, before the shorthand repository.
+        maven {
+            name = "MavenCentralCDN"
+            url = uri("https://repo1.maven.org/maven2")
+        }
         mavenCentral()
         // Discord Social SDK ships as a local .aar. Consumed as a dependency rather than unpacked
         // by hand: hand-staging silently dropped its consumer proguard rules (crash at boot), its
