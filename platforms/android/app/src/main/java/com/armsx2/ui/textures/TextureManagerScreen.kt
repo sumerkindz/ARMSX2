@@ -214,7 +214,7 @@ private fun TextureDumpBrowser(
                 )
             }
             Text(
-                "Dumping is runtime-only. Export a dump to your image editor, then import the edited PNG; its original hash filename is preserved automatically.",
+                "Capture applies to the running game. Select any saved game below to browse its dumps; export a PNG to edit it, then import the edited PNG to keep the original hash filename.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
