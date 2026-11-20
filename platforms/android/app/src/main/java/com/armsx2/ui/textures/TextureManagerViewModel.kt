@@ -209,7 +209,9 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     check(item.file.isFile) { "The dump file no longer exists." }
                     val output = context.contentResolver.openOutputStream(uri)
                         ?: error("Unable to open the destination.")
-                    item.file.inputStream().use { input -> output.use(input::copyTo) }
+                    output.use { destination ->
+                        item.file.inputStream().use { input -> input.copyTo(destination) }
+                    }
                     true
                 }.getOrDefault(false)
             }
