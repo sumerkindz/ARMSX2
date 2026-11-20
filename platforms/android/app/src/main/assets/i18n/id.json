@@ -2235,7 +2235,7 @@
   "textures.dump.showAll": "Tampilkan semua dump",
   "textures.dump.onlyUnreplaced": "Tampilkan tekstur yang belum memiliki replacement",
   "textures.dump.noMatch": "Tidak ada dump yang cocok dengan pencarian/filter ini.",
-  "textures.dump.shown": "Menampilkan %1$d dari %2$d dump terbaru (maksimal 120).",
+  "textures.dump.shown": "Menampilkan %1$d dari %2$d dump tersimpan pada daftar saat ini.",
   "textures.dump.loading": "Memuat dump tekstur tersimpan…",
   "textures.dump.folderEmpty": "Tidak ada dump PNG di folder ini. Segarkan untuk memindai ulang.",
   "textures.dump.gameSummary": "%1$s · %2$d tekstur tersimpan · %3$s",
