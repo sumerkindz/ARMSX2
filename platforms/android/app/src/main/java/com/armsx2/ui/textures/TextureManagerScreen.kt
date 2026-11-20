@@ -319,6 +319,19 @@ private fun TextureDumpBrowser(
                                 )
                             }
                         }
+
+                        if ((selectedGame?.fileCount ?: 0) > state.dumps.size) {
+                            TextButton(
+                                onClick = viewModel::loadMoreDumps,
+                                enabled = !state.loadingDumps && !state.busy,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    if (state.loadingDumps) str("textures.dump.loading")
+                                    else str("textures.dump.loadMore"),
+                                )
+                            }
+                        }
                     }
                 }
             }
