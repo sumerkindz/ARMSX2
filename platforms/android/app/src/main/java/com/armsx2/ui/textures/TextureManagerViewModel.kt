@@ -284,6 +284,8 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                 val dumpDir = File(gameDir, "dumps").canonicalFile
                 val sourceDump = item.file.canonicalFile
                 val replacementDir = File(gameDir, "replacements").canonicalFile
+                val target = File(replacementDir, sourceDump.name)
+                val temporary = File(replacementDir, sourceDump.name + ".importing")
                 runCatching {
                     check(gameDir.parentFile == root) { "Invalid game texture folder." }
                     check(sourceDump.parentFile == dumpDir && sourceDump.isFile) {
@@ -295,8 +297,6 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     check(replacementDir.isDirectory && replacementDir.parentFile == gameDir) {
                         "Invalid replacements folder."
                     }
-                    val target = File(replacementDir, sourceDump.name)
-                    val temporary = File(replacementDir, sourceDump.name + ".importing")
                     temporary.delete()
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         temporary.outputStream().use(input::copyTo)
