@@ -1,6 +1,9 @@
 name: Android APK Build
 
 on:
+  push:
+    branches:
+      - feature/android-texture-dump-browser
   pull_request:
     branches:
       - master
