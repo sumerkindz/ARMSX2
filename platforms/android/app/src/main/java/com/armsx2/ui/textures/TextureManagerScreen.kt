@@ -195,7 +195,13 @@ private fun TextureDumpBrowser(
                         MainActivityRuntime.eState.value != com.armsx2.EmuState.STOPPED &&
                         !state.busy,
                 ) {
-                    Text("Toggle dumping")
+                    Text(
+                        when (state.dumpingEnabled) {
+                            true -> "Stop dumping"
+                            false -> "Start dumping"
+                            null -> "Toggle dumping"
+                        },
+                    )
                 }
                 Text(
                     when (state.dumpingEnabled) {
@@ -248,7 +254,8 @@ private fun TextureDumpBrowser(
                 }
                 if (state.dumps.isEmpty()) {
                     Text(
-                        "Loading saved texture dumps…",
+                        if (state.loadingDumps) "Loading saved texture dumps…"
+                        else "No PNG dumps are available in this folder. Refresh to rescan it.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
