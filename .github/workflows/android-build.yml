@@ -12,6 +12,7 @@ on:
       - 'cmake/**'
       - 'bin/resources/**'
       - '.github/workflows/android-build.yml'
+      - '.github/workflows/build-all.yml'
 
 permissions:
   contents: read
