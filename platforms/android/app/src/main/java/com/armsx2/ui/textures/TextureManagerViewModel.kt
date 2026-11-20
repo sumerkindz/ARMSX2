@@ -275,18 +275,29 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
      * the dump, not the picked image: that name contains the PS2 texture hash the core matches.
      */
     fun importReplacementImage(item: TextureDumpItem, uri: Uri) {
-        if (item.serial != state.value.activeSerial) {
-            state.value = state.value.copy(error = "The selected dump belongs to a different game. Refresh the browser and try again.")
-            return
-        }
         val context = getApplication<Application>()
         state.value = state.value.copy(busy = true, progress = 0, message = null, error = null)
         viewModelScope.launch {
             val imported = withContext(Dispatchers.IO) {
-                val replacementDir = File(textureRoot(), "${item.serial}/replacements").apply { mkdirs() }
-                val target = File(replacementDir, item.file.name)
-                val temporary = File(replacementDir, "${item.file.name}.importing")
+                val root = textureRoot().canonicalFile
+                val gameDir = File(root, item.serial).canonicalFile
+                val dumpDir = File(gameDir, "dumps").canonicalFile
+                val sourceDump = item.file.canonicalFile
+                val replacementDir = File(gameDir, "replacements").canonicalFile
                 runCatching {
+                    check(gameDir.parentFile == root) { "Invalid game texture folder." }
+                    check(sourceDump.parentFile == dumpDir && sourceDump.isFile) {
+                        "The selected texture dump no longer exists."
+                    }
+                    if (!replacementDir.exists()) check(replacementDir.mkdirs()) {
+                        "Unable to create the replacements folder."
+                    }
+                    check(replacementDir.isDirectory && replacementDir.parentFile == gameDir) {
+                        "Invalid replacements folder."
+                    }
+                    val target = File(replacementDir, sourceDump.name)
+                    val temporary = File(replacementDir, sourceDump.name + ".importing")
+                    temporary.delete()
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         temporary.outputStream().use(input::copyTo)
                     } ?: error("Unable to open the selected image.")
@@ -298,6 +309,24 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                         stream.read(header) == header.size && header.contentEquals(pngSignature)
                     }
                     check(isPng) { "Choose an edited PNG image. Other image formats are not accepted yet." }
+
+                    // A PNG signature alone does not prove that the full image is decodable. Check
+                    // its dimensions and decode a downsampled copy before replacing a working file.
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    android.graphics.BitmapFactory.decodeFile(temporary.absolutePath, bounds)
+                    check(bounds.outWidth in 1..16384 && bounds.outHeight in 1..16384) {
+                        "The PNG is invalid or exceeds the supported 16384-pixel texture limit."
+                    }
+                    val sampleSize = Integer.highestOneBit(
+                        maxOf(bounds.outWidth, bounds.outHeight) / 512
+                    ).coerceAtLeast(1)
+                    val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+                        inSampleSize = sampleSize
+                    }
+                    check(android.graphics.BitmapFactory.decodeFile(temporary.absolutePath, decodeOptions) != null) {
+                        "The PNG could not be decoded."
+                    }
+
                     runCatching {
                         Files.move(
                             temporary.toPath(),
@@ -324,7 +353,8 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                 if (!ConfigStore.loadGlobal().graphics.loadTextureReplacements) {
                     update { it.copy(graphics = it.graphics.copy(loadTextureReplacements = true)) }
                 }
-                reloadCore()
+                val liveSerial = runCatching { NativeApp.getGameSerial() }.getOrNull()
+                if (item.serial.equals(liveSerial, ignoreCase = true)) reloadCore()
                 refresh()
             }
         }
