@@ -28,16 +28,32 @@ data class TexturePackItem(
     val gameTitle: String? = null,
 )
 
+data class TextureDumpItem(
+    val serial: String,
+    val file: File,
+    val replacementExists: Boolean,
+)
+
 data class TextureManagerUiState(
     val settings: Settings = Settings(),
     val packs: List<TexturePackItem> = emptyList(),
     val activeSerial: String? = null,
+    val dumps: List<TextureDumpItem> = emptyList(),
+    val dumpingEnabled: Boolean? = null,
     /** Serials in the user's ROM library, upper-cased. Read from the scan cache, never scanned here. */
     val librarySerials: Set<String> = emptySet(),
     val busy: Boolean = false,
     val progress: Int = 0,
     val message: String? = null,
     val error: String? = null,
+)
+
+private data class TextureManagerScanResult(
+    val packs: List<TexturePackItem>,
+    val settings: Settings,
+    val librarySerials: Set<String>,
+    val activeSerial: String?,
+    val dumps: List<TextureDumpItem>,
 )
 
 class TextureManagerViewModel(application: Application) : AndroidViewModel(application) {
@@ -53,6 +69,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
      * "the texture packs menu hangs and I have to close the app" was.
      */
     fun refresh() {
+        val activeSerial = runtimeSerial()
         viewModelScope.launch {
             val scanned = withContext(Dispatchers.IO) {
                 val root = textureRoot().apply { mkdirs() }
@@ -112,13 +129,27 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     .map { it.copy(gameTitle = titles[it.serial.uppercase()]) }
                     .sortedBy { (it.gameTitle ?: it.serial).lowercase() }
 
-                Triple(named, settings, library)
+                // Texture dumps are separate from installed replacements. Keep their original
+                // filenames: the filename is the GS hash used by the replacement loader.
+                val dumps = activeSerial?.let { serial ->
+                    val dumpDir = File(root, "$serial/dumps")
+                    val replacementDir = File(root, "$serial/replacements")
+                    dumpDir.listFiles().orEmpty()
+                        .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
+                        .sortedByDescending { it.lastModified() }
+                        .take(120)
+                        .map { file -> TextureDumpItem(serial, file, File(replacementDir, file.name).isFile) }
+                }.orEmpty()
+
+                TextureManagerScanResult(named, settings, library, activeSerial, dumps)
             }
             state.value = state.value.copy(
-                settings = scanned.second,
-                packs = scanned.first,
-                librarySerials = scanned.third,
-                activeSerial = runtimeSerial(),
+                settings = scanned.settings,
+                packs = scanned.packs,
+                librarySerials = scanned.librarySerials,
+                activeSerial = scanned.activeSerial,
+                dumps = scanned.dumps,
+                dumpingEnabled = if (state.value.activeSerial == scanned.activeSerial) state.value.dumpingEnabled else null,
             )
         }
     }
@@ -143,6 +174,83 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
         return MainActivityRuntime.currentGame.value?.serial
             // Survives quitting to the library, where the two sources above are both blank.
             ?: MainActivityRuntime.contextGame.value?.serial?.takeIf { it.isNotBlank() }
+    }
+
+    /** Toggle the core's existing runtime-only texture dump switch for the running game. */
+    fun toggleTextureDumping() {
+        if (!MainActivityRuntime.nativeReady.value) {
+            state.value = state.value.copy(error = "Start a game before enabling texture dumping.")
+            return
+        }
+        val liveSerial = runCatching { NativeApp.getGameSerial() }.getOrNull()
+        if (liveSerial.isNullOrBlank()) {
+            state.value = state.value.copy(error = "Start a game before enabling texture dumping.")
+            return
+        }
+        val enabled = runCatching { NativeApp.toggleTextureDumping() }.getOrElse {
+            state.value = state.value.copy(error = "Unable to toggle texture dumping: ${it.message ?: "native error"}")
+            return
+        }
+        state.value = state.value.copy(
+            dumpingEnabled = enabled,
+            message = if (enabled) "Texture dumping is ON. Play the game, then turn it OFF to avoid collecting unnecessary textures."
+                else "Texture dumping is OFF.",
+        )
+    }
+
+    /**
+     * Import an edited PNG for a dumped texture. The output filename is deliberately taken from
+     * the dump, not the picked image: that name contains the PS2 texture hash the core matches.
+     */
+    fun importReplacementImage(item: TextureDumpItem, uri: Uri) {
+        if (item.serial != state.value.activeSerial) {
+            state.value = state.value.copy(error = "The selected dump belongs to a different game. Refresh the browser and try again.")
+            return
+        }
+        val context = getApplication<Application>()
+        state.value = state.value.copy(busy = true, progress = 0, message = null, error = null)
+        viewModelScope.launch {
+            val imported = withContext(Dispatchers.IO) {
+                val replacementDir = File(textureRoot(), "${item.serial}/replacements").apply { mkdirs() }
+                val target = File(replacementDir, item.file.name)
+                val temporary = File(replacementDir, "${item.file.name}.importing")
+                runCatching {
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        temporary.outputStream().use(input::copyTo)
+                    } ?: error("Unable to open the selected image.")
+                    val pngSignature = byteArrayOf(
+                        0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+                    )
+                    val isPng = temporary.inputStream().use { stream ->
+                        val header = ByteArray(8)
+                        stream.read(header) == header.size && header.contentEquals(pngSignature)
+                    }
+                    check(isPng) { "Choose an edited PNG image. Other image formats are not accepted yet." }
+                    if (target.exists()) check(target.delete()) { "Unable to replace the existing texture file." }
+                    if (!temporary.renameTo(target)) {
+                        temporary.copyTo(target, overwrite = true)
+                        temporary.delete()
+                    }
+                    true
+                }.getOrElse {
+                    temporary.delete()
+                    false
+                }
+            }
+            state.value = state.value.copy(
+                busy = false,
+                message = if (imported) "Imported replacement as ${item.file.name} for ${item.serial}."
+                    else null,
+                error = if (imported) null else "Unable to import the PNG. Check that it is a valid image and try again.",
+            )
+            if (imported) {
+                if (!ConfigStore.loadGlobal().graphics.loadTextureReplacements) {
+                    update { it.copy(graphics = it.graphics.copy(loadTextureReplacements = true)) }
+                }
+                reloadCore()
+                refresh()
+            }
+        }
     }
 
     fun update(transform: (Settings) -> Settings) {
