@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.armsx2.TexturePackInstallState
 import com.armsx2.TexturePackInstaller
 import com.armsx2.data.library.GameLibraryRepository
+import com.armsx2.i18n.I18n
 import com.armsx2.runtime.MainActivityRuntime
 import com.armsx2.config.ConfigStore
 import com.armsx2.config.Settings
@@ -239,7 +240,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
         if (!MainActivityRuntime.nativeReady.value ||
             MainActivityRuntime.eState.value == com.armsx2.EmuState.STOPPED
         ) {
-            state.value = state.value.copy(error = "Start a game before enabling texture dumping.")
+            state.value = state.value.copy(error = I18n.get("textures.dump.startGame"))
             return
         }
         val liveSerial = runCatching { NativeApp.getGameSerial() }.getOrNull()
@@ -253,8 +254,8 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
         }
         state.value = state.value.copy(
             dumpingEnabled = enabled,
-            message = if (enabled) "Texture dumping is ON. Play the game, then turn it OFF to avoid collecting unnecessary textures."
-                else "Texture dumping is OFF.",
+            message = if (enabled) I18n.get("textures.dump.enabled")
+                else I18n.get("textures.dump.disabled"),
         )
     }
 
@@ -265,9 +266,9 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
         viewModelScope.launch {
             val exported = withContext(Dispatchers.IO) {
                 runCatching {
-                    check(item.file.isFile) { "The dump file no longer exists." }
+                    check(item.file.isFile) { I18n.get("textures.dump.fileMissing") }
                     val output = context.contentResolver.openOutputStream(uri)
-                        ?: error("Unable to open the destination.")
+                        ?: error(I18n.get("textures.dump.destinationFailed"))
                     output.use { destination ->
                         item.file.inputStream().use { input -> input.copyTo(destination) }
                     }
@@ -276,9 +277,9 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
             }
             state.value = state.value.copy(
                 busy = false,
-                message = if (exported) "Exported ${item.file.name}."
+                message = if (exported) I18n.get("textures.dump.exported").format(item.file.name)
                     else null,
-                error = if (exported) null else "Unable to export this texture dump.",
+                error = if (exported) null else I18n.get("textures.dump.exportFailed"),
             )
         }
     }
@@ -313,7 +314,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     temporary.delete()
                     context.contentResolver.openInputStream(uri)?.use { input ->
                         temporary.outputStream().use(input::copyTo)
-                    } ?: error("Unable to open the selected image.")
+                    } ?: error(I18n.get("textures.dump.destinationFailed"))
                     val pngSignature = byteArrayOf(
                         0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
                     )
@@ -321,14 +322,15 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                         val header = ByteArray(8)
                         stream.read(header) == header.size && header.contentEquals(pngSignature)
                     }
-                    check(isPng) { "Choose an edited PNG image. Other image formats are not accepted yet." }
+                    check(isPng) { I18n.get("textures.dump.choosePng") }
 
                     // A PNG signature alone does not prove that the full image is decodable. Check
                     // its dimensions and decode a downsampled copy before replacing a working file.
                     val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
                     android.graphics.BitmapFactory.decodeFile(temporary.absolutePath, bounds)
-                    check(bounds.outWidth in 1..16384 && bounds.outHeight in 1..16384) {
-                        "The PNG is invalid or exceeds the supported 16384-pixel texture limit."
+                    check(bounds.outWidth > 0 && bounds.outHeight > 0) { I18n.get("textures.dump.invalidPng") }
+                    check(bounds.outWidth <= 16384 && bounds.outHeight <= 16384) {
+                        I18n.get("textures.dump.pngLimit")
                     }
                     val sampleSize = Integer.highestOneBit(
                         maxOf(bounds.outWidth, bounds.outHeight) / 512
@@ -358,9 +360,9 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
             }
             state.value = state.value.copy(
                 busy = false,
-                message = if (imported) "Imported replacement as ${item.file.name} for ${item.serial}."
+                message = if (imported) I18n.get("textures.dump.imported").format(item.file.name, item.serial)
                     else null,
-                error = if (imported) null else "Unable to import the PNG. Check that it is a valid image and try again.",
+                error = if (imported) null else I18n.get("textures.dump.importFailed"),
             )
             if (imported) {
                 if (!ConfigStore.loadGlobal().graphics.loadTextureReplacements) {
