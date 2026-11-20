@@ -233,7 +233,9 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
 
     /** Toggle the core's existing runtime-only texture dump switch for the running game. */
     fun toggleTextureDumping() {
-        if (!MainActivityRuntime.nativeReady.value) {
+        if (!MainActivityRuntime.nativeReady.value ||
+            MainActivityRuntime.eState.value == com.armsx2.EmuState.STOPPED
+        ) {
             state.value = state.value.copy(error = "Start a game before enabling texture dumping.")
             return
         }
