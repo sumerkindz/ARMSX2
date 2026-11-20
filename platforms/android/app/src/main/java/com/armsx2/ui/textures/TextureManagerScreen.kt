@@ -201,7 +201,7 @@ private fun TextureDumpBrowser(
                 )
             }
             Text(
-                "Export a dump to your image editor, then import the edited PNG. Its original hash filename is preserved automatically.",
+                "Dumping is runtime-only. Export a dump to your image editor, then import the edited PNG; its original hash filename is preserved automatically.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
