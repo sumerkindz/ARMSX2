@@ -346,7 +346,13 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     )
                     val isPng = temporary.inputStream().use { stream ->
                         val header = ByteArray(8)
-                        stream.read(header) == header.size && header.contentEquals(pngSignature)
+                        var offset = 0
+                        while (offset < header.size) {
+                            val read = stream.read(header, offset, header.size - offset)
+                            if (read <= 0) break
+                            offset += read
+                        }
+                        offset == header.size && header.contentEquals(pngSignature)
                     }
                     check(isPng) { I18n.get("textures.dump.choosePng") }
 
@@ -364,9 +370,10 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     val decodeOptions = android.graphics.BitmapFactory.Options().apply {
                         inSampleSize = sampleSize
                     }
-                    check(android.graphics.BitmapFactory.decodeFile(temporary.absolutePath, decodeOptions) != null) {
-                        "The PNG could not be decoded."
-                    }
+                    val validationBitmap =
+                        android.graphics.BitmapFactory.decodeFile(temporary.absolutePath, decodeOptions)
+                            ?: error(I18n.get("textures.dump.invalidPng"))
+                    validationBitmap.recycle()
 
                     runCatching {
                         Files.move(
