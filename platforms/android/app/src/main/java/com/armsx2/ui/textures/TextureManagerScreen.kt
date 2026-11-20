@@ -62,10 +62,16 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let(viewModel::importFolder) }
     val archivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(viewModel::importArchive) }
     val pendingReplacement = remember { androidx.compose.runtime.mutableStateOf<TextureDumpItem?>(null) }
+    val pendingExport = remember { androidx.compose.runtime.mutableStateOf<TextureDumpItem?>(null) }
     val replacementImagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         val selectedDump = pendingReplacement.value
         if (uri != null && selectedDump != null) viewModel.importReplacementImage(selectedDump, uri)
         pendingReplacement.value = null
+    }
+    val dumpExportPicker = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("image/png")) { uri ->
+        val selectedDump = pendingExport.value
+        if (uri != null && selectedDump != null) viewModel.exportDump(selectedDump, uri)
+        pendingExport.value = null
     }
     LaunchedEffect(Unit) { viewModel.refresh() }
     // Options on the left, packs on the right: the controller keeps to a column and crosses with
@@ -126,6 +132,10 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
                 state = state,
                 viewModel = viewModel,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                onExportImage = { item ->
+                    pendingExport.value = item
+                    dumpExportPicker.launch(item.file.name)
+                },
                 onImportImage = { item ->
                     pendingReplacement.value = item
                     replacementImagePicker.launch(arrayOf("image/png"))
@@ -149,6 +159,7 @@ private fun TextureDumpBrowser(
     state: TextureManagerUiState,
     viewModel: TextureManagerViewModel,
     modifier: Modifier,
+    onExportImage: (TextureDumpItem) -> Unit,
     onImportImage: (TextureDumpItem) -> Unit,
 ) {
     GlassPanel(modifier) {
@@ -183,7 +194,7 @@ private fun TextureDumpBrowser(
                 )
             }
             Text(
-                "Dumped textures are stored per game. Import an edited PNG to create or update its replacement; the original hash filename is preserved.",
+                "Export a dump to your image editor, then import the edited PNG. Its original hash filename is preserved automatically.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -210,7 +221,12 @@ private fun TextureDumpBrowser(
                     verticalArrangement = Arrangement.spacedBy(7.dp),
                 ) {
                     items(state.dumps, key = { it.file.name }) { item ->
-                        TextureDumpRow(item = item, enabled = !state.busy, onImport = { onImportImage(item) })
+                        TextureDumpRow(
+                            item = item,
+                            enabled = !state.busy,
+                            onExport = { onExportImage(item) },
+                            onImport = { onImportImage(item) },
+                        )
                     }
                 }
             }
@@ -222,6 +238,7 @@ private fun TextureDumpBrowser(
 private fun TextureDumpRow(
     item: TextureDumpItem,
     enabled: Boolean,
+    onExport: () -> Unit,
     onImport: () -> Unit,
 ) {
     Surface(
@@ -255,8 +272,11 @@ private fun TextureDumpRow(
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Button(onClick = onImport, enabled = enabled) {
-                Text(if (item.replacementExists) "Update PNG" else "Import PNG")
+            Column(horizontalAlignment = Alignment.End) {
+                TextButton(onClick = onExport, enabled = enabled) { Text("Export") }
+                TextButton(onClick = onImport, enabled = enabled) {
+                    Text(if (item.replacementExists) "Import update" else "Import PNG")
+                }
             }
         }
     }
