@@ -1,6 +1,8 @@
 package com.armsx2.ui.textures
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.AndroidViewModel
@@ -12,6 +14,7 @@ import com.armsx2.runtime.MainActivityRuntime
 import com.armsx2.config.ConfigStore
 import com.armsx2.config.Settings
 import java.io.File
+import java.io.FileOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,9 +31,22 @@ data class TexturePackItem(
     val gameTitle: String? = null,
 )
 
+data class TextureDumpItem(
+    val serial: String,
+    val file: File,
+    val width: Int,
+    val height: Int,
+    val size: Long,
+)
+
 data class TextureManagerUiState(
     val settings: Settings = Settings(),
     val packs: List<TexturePackItem> = emptyList(),
+    val dumpSerial: String? = null,
+    val dumpItems: List<TextureDumpItem> = emptyList(),
+    val dumpTotalCount: Int = 0,
+    val dumpEnabled: Boolean = false,
+    val dumpBusy: Boolean = false,
     val activeSerial: String? = null,
     /** Serials in the user's ROM library, upper-cased. Read from the scan cache, never scanned here. */
     val librarySerials: Set<String> = emptySet(),
@@ -143,6 +159,164 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
         return MainActivityRuntime.currentGame.value?.serial
             // Survives quitting to the library, where the two sources above are both blank.
             ?: MainActivityRuntime.contextGame.value?.serial?.takeIf { it.isNotBlank() }
+    }
+
+
+    /**
+     * Read the PNGs the native GS dumper has written for the active game's exact core serial.
+     * The native naming scheme is also the replacement lookup key, so the filename is never
+     * normalized or regenerated here.
+     */
+    fun refreshDumps() {
+        val serial = (state.value.activeSerial ?: runtimeSerial())?.takeIf(String::isNotBlank)
+        if (serial == null) {
+            state.value = state.value.copy(dumpSerial = null, dumpItems = emptyList(), dumpTotalCount = 0, dumpEnabled = false, dumpBusy = false)
+            return
+        }
+
+        state.value = state.value.copy(dumpBusy = true)
+        viewModelScope.launch {
+            val scanned = withContext(Dispatchers.IO) {
+                val directory = File(textureRoot(), "$serial/dumps")
+                val files = directory.listFiles().orEmpty()
+                    .filter { it.isFile && it.extension.equals("png", ignoreCase = true) }
+                    .sortedByDescending { it.lastModified() }
+                val items = files.take(120).mapNotNull { file ->
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(file.absolutePath, bounds)
+                    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                        null
+                    } else {
+                        TextureDumpItem(serial, file, bounds.outWidth, bounds.outHeight, file.length())
+                    }
+                }
+                items to files.size
+            }
+            val dumping = if (MainActivityRuntime.nativeReady.value &&
+                MainActivityRuntime.eState.value != com.armsx2.EmuState.STOPPED
+            ) {
+                withContext(Dispatchers.IO) {
+                    runCatching { NativeApp.isTextureDumpingEnabled() }.getOrDefault(false)
+                }
+            } else {
+                state.value.settings.graphics.dumpReplaceableTextures
+            }
+            state.value = state.value.copy(
+                dumpSerial = serial,
+                dumpItems = scanned.first,
+                dumpTotalCount = scanned.second,
+                dumpEnabled = dumping,
+                dumpBusy = false,
+            )
+        }
+    }
+
+    /** Toggle the existing PCSX2 texture-dump switch on the emulation CPU thread. */
+    fun toggleTextureDumping() {
+        if (!MainActivityRuntime.nativeReady.value ||
+            MainActivityRuntime.eState.value == com.armsx2.EmuState.STOPPED
+        ) {
+            state.value = state.value.copy(error = "Start a PS2 game before enabling texture dumping.")
+            return
+        }
+        viewModelScope.launch {
+            val enabled = withContext(Dispatchers.IO) {
+                runCatching { NativeApp.toggleTextureDumping() }.getOrDefault(false)
+            }
+            state.value = state.value.copy(
+                dumpEnabled = enabled,
+                message = if (enabled) {
+                    "Texture dumping is ON. Return to the game, play normally, then refresh this browser."
+                } else {
+                    "Texture dumping is OFF."
+                },
+            )
+        }
+    }
+
+    /** Export one original dump PNG through Android's document picker. */
+    fun exportDump(uri: Uri, item: TextureDumpItem) {
+        viewModelScope.launch {
+            val failure = withContext(Dispatchers.IO) {
+                runCatching {
+                    require(item.file.isFile) { "The dump file no longer exists." }
+                    val output = getApplication<Application>().contentResolver.openOutputStream(uri, "wt")
+                        ?: error("Android could not open the selected export location.")
+                    output.use { stream ->
+                        item.file.inputStream().use { input -> input.copyTo(stream) }
+                    }
+                }.exceptionOrNull()?.message
+            }
+            state.value = if (failure == null) {
+                state.value.copy(message = "Exported ${item.file.name}.")
+            } else {
+                state.value.copy(error = "Export failed: $failure")
+            }
+        }
+    }
+
+    /**
+     * Import an edited image as a replacement, retaining the exact dump filename (the GS hash key).
+     * Any supported Android image format is decoded and written as PNG. Large images are rejected
+     * before allocation to avoid an out-of-memory crash on mobile devices.
+     */
+    fun importReplacement(uri: Uri, item: TextureDumpItem) {
+        state.value = state.value.copy(dumpBusy = true, error = null, message = null)
+        viewModelScope.launch {
+            val failure = withContext(Dispatchers.IO) {
+                runCatching {
+                    val expectedDumpDir = File(textureRoot(), "§{item.serial}/dumps").canonicalFile
+                    require(item.file.canonicalFile.parentFile == expectedDumpDir) { "Invalid texture dump path." }
+                    require(item.file.isFile && item.file.extension.equals("png", ignoreCase = true)) {
+                        "The selected texture dump is no longer available."
+                    }
+
+                    val resolver = getApplication<Application>().contentResolver
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                        ?: error("The selected image could not be opened.")
+                    val pixelCount = bounds.outWidth.toLong() * bounds.outHeight.toLong()
+                    require(bounds.outWidth in 1..8192 && bounds.outHeight in 1..8192 && pixelCount <= 16_777_216L) {
+                        "Image is too large. Maximum supported import is 8192 px per side and 16 megapixels."
+                    }
+
+                    val bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) }
+                        ?: error("The selected image could not be decoded.")
+                    try {
+                        val replacements = File(textureRoot(), "§{item.serial}/replacements")
+                        require(replacements.mkdirs() || replacements.isDirectory) {
+                            "Could not create the replacements folder."
+                        }
+                        val destination = File(replacements, item.file.name)
+                        val temporary = File(replacements, ".§{item.file.name}.importing")
+                        val written = FileOutputStream(temporary).use { output ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+                        }
+                        require(written) { "The image could not be encoded as PNG." }
+                        if (!temporary.renameTo(destination)) {
+                            destination.delete()
+                            require(temporary.renameTo(destination)) { "Could not install the replacement image." }
+                        }
+                    } finally {
+                        bitmap.recycle()
+                    }
+                }.exceptionOrNull()?.message
+            }
+
+            if (failure == null) {
+                if (!state.value.settings.graphics.loadTextureReplacements) {
+                    update { it.copy(graphics = it.graphics.copy(loadTextureReplacements = true)) }
+                }
+                reloadCore()
+                state.value = state.value.copy(
+                    dumpBusy = false,
+                    message = "Replacement saved as §{item.file.name}. Restart the game to ensure it is loaded.",
+                )
+            } else {
+                state.value = state.value.copy(dumpBusy = false, error = "Import failed: $failure")
+            }
+            refreshDumps()
+        }
     }
 
     fun update(transform: (Settings) -> Settings) {
