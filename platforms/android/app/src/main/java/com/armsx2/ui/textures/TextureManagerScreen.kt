@@ -52,7 +52,10 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
     val state = viewModel.state.value
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let(viewModel::importFolder) }
     val archivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(viewModel::importArchive) }
-    LaunchedEffect(Unit) { viewModel.refresh() }
+    LaunchedEffect(Unit) {
+        viewModel.refresh()
+        viewModel.refreshDumps()
+    }
     // Options on the left, packs on the right: the controller keeps to a column and crosses with
     // Left/Right.
     com.armsx2.ui.settings.ColumnControllerNav()
@@ -75,7 +78,7 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
                     // nothing), so offer every file and let the installer read the format.
                     RoundAction("＋", str("action.import"), { archivePicker.launch(arrayOf("*/*")) }, controllerId = "textureMgr.top.import")
                     RoundAction("🗀", str("action.importFolder"), { folderPicker.launch(null) }, controllerId = "textureMgr.top.folder")
-                    RoundAction("↻", str("games.card.refresh"), viewModel::refresh, controllerId = "textureMgr.top.refresh")
+                    RoundAction("↻", str("games.card.refresh"), { viewModel.refresh(); viewModel.refreshDumps() }, controllerId = "textureMgr.top.refresh")
                 },
             )
             BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -83,6 +86,8 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
                 if (compact) {
                     Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
                         TextureOptions(state, viewModel, Modifier.fillMaxWidth())
+                        Spacer(Modifier.padding(top = 10.dp))
+                        TextureDumpBrowser(state, viewModel)
                         Spacer(Modifier.padding(top = 10.dp))
                         TextureOnlineSection(catalogSerial(state), librarySerials(state), ownedSerials(state), Modifier.fillMaxWidth()) {
                             viewModel.onPackInstalled()
@@ -97,6 +102,8 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
                     ) {
                         TextureOptions(state, viewModel, Modifier.width(310.dp))
                         Column(Modifier.weight(1f)) {
+                            TextureDumpBrowser(state, viewModel)
+                            Spacer(Modifier.padding(top = 10.dp))
                             TextureOnlineSection(catalogSerial(state), librarySerials(state), ownedSerials(state), Modifier.fillMaxWidth()) {
                                 viewModel.onPackInstalled()
                             }
