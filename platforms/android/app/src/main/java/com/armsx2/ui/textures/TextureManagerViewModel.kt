@@ -50,6 +50,7 @@ data class TextureManagerUiState(
     val dumpGames: List<TextureDumpGame> = emptyList(),
     val selectedDumpSerial: String? = null,
     val dumps: List<TextureDumpItem> = emptyList(),
+    val loadingDumps: Boolean = false,
     val dumpingEnabled: Boolean? = null,
     /** Serials in the user's ROM library, upper-cased. Read from the scan cache, never scanned here. */
     val librarySerials: Set<String> = emptySet(),
@@ -176,6 +177,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                 dumpGames = scanned.dumpGames,
                 selectedDumpSerial = scanned.selectedDumpSerial,
                 dumps = scanned.dumps,
+                loadingDumps = false,
                 dumpingEnabled = if (state.value.activeSerial == scanned.activeSerial) state.value.dumpingEnabled else null,
             )
         }
@@ -183,7 +185,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
 
     fun selectDumpGame(serial: String) {
         if (state.value.selectedDumpSerial.equals(serial, ignoreCase = true)) return
-        state.value = state.value.copy(selectedDumpSerial = serial, dumps = emptyList())
+        state.value = state.value.copy(selectedDumpSerial = serial, dumps = emptyList(), loadingDumps = true)
         viewModelScope.launch {
             val root = withContext(Dispatchers.IO) { textureRoot() }
             val files = withContext(Dispatchers.IO) {
@@ -196,7 +198,7 @@ class TextureManagerViewModel(application: Application) : AndroidViewModel(appli
                     .map { file -> TextureDumpItem(serial, file, File(replacementDir, file.name).isFile) }
             }
             if (state.value.selectedDumpSerial.equals(serial, ignoreCase = true)) {
-                state.value = state.value.copy(dumps = files)
+                state.value = state.value.copy(dumps = files, loadingDumps = false)
             }
         }
     }
