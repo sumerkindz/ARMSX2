@@ -2255,5 +2255,6 @@
   "textures.dump.invalidPng": "File PNG tidak valid atau tidak dapat dibaca.",
   "textures.dump.pngLimit": "PNG melebihi batas tekstur 16384 piksel yang didukung.",
   "textures.dump.imported": "Replacement diimpor sebagai %1$s untuk %2$s.",
-  "textures.dump.importFailed": "Tidak dapat mengimpor PNG. Pastikan file valid lalu coba lagi."
+  "textures.dump.importFailed": "Tidak dapat mengimpor PNG. Pastikan file valid lalu coba lagi.",
+  "textures.dump.loadMore": "Muat 120 tekstur yang lebih lama"
 }
