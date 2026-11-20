@@ -52,10 +52,7 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
     val state = viewModel.state.value
     val folderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let(viewModel::importFolder) }
     val archivePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(viewModel::importArchive) }
-    LaunchedEffect(Unit) {
-        viewModel.refresh()
-        viewModel.refreshDumps()
-    }
+    LaunchedEffect(Unit) { viewModel.refresh() }
     // Options on the left, packs on the right: the controller keeps to a column and crosses with
     // Left/Right.
     com.armsx2.ui.settings.ColumnControllerNav()
@@ -78,7 +75,7 @@ fun TextureManagerScreen(onBack: () -> Unit, viewModel: TextureManagerViewModel 
                     // nothing), so offer every file and let the installer read the format.
                     RoundAction("＋", str("action.import"), { archivePicker.launch(arrayOf("*/*")) }, controllerId = "textureMgr.top.import")
                     RoundAction("🗀", str("action.importFolder"), { folderPicker.launch(null) }, controllerId = "textureMgr.top.folder")
-                    RoundAction("↻", str("games.card.refresh"), { viewModel.refresh(); viewModel.refreshDumps() }, controllerId = "textureMgr.top.refresh")
+                    RoundAction("↻", str("games.card.refresh"), viewModel::refresh, controllerId = "textureMgr.top.refresh")
                 },
             )
             BoxWithConstraints(Modifier.fillMaxWidth()) {
