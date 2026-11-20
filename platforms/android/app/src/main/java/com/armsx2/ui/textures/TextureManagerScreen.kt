@@ -205,8 +205,8 @@ private fun TextureDumpBrowser(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                SectionTitle("Texture Dump Browser", selectedGame?.gameTitle ?: selectedGame?.serial ?: "No saved dumps")
-                TextButton(onClick = viewModel::refresh, enabled = !state.busy) { Text("Refresh") }
+                SectionTitle(str("textures.dump.title"), selectedGame?.gameTitle ?: selectedGame?.serial ?: str("textures.dump.noSaved"))
+                TextButton(onClick = viewModel::refresh, enabled = !state.busy) { Text(str("textures.dump.refresh")) }
             }
             Row(
                 Modifier.fillMaxWidth(),
@@ -221,24 +221,24 @@ private fun TextureDumpBrowser(
                 ) {
                     Text(
                         when (state.dumpingEnabled) {
-                            true -> "Stop dumping"
-                            false -> "Start dumping"
-                            null -> "Toggle dumping"
+                            true -> str("textures.dump.stop")
+                            false -> str("textures.dump.start")
+                            null -> str("textures.dump.toggle")
                         },
                     )
                 }
                 Text(
                     when (state.dumpingEnabled) {
-                        true -> "Capture ON"
-                        false -> "Capture OFF"
-                        null -> "Runtime state unknown"
+                        true -> str("textures.dump.on")
+                        false -> str("textures.dump.off")
+                        null -> str("textures.dump.unknown")
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Text(
-                "Capture applies to the running game and requires the Hardware renderer. Select any saved game below to browse its dumps; export a PNG to edit it, then import the edited PNG to keep the original hash filename. Turn capture OFF when finished to limit storage use.",
+                str("textures.dump.instructions"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -246,9 +246,9 @@ private fun TextureDumpBrowser(
             if (state.dumpGames.isEmpty()) {
                 Text(
                     if (state.activeSerial != null) {
-                        "No saved PNG dumps found yet for " + state.activeSerial + ". Start dumping, play the game, then refresh."
+                        str("textures.dump.noneForGame").format(state.activeSerial)
                     } else {
-                        "No saved texture dumps yet. Start a game and enable dumping to capture textures."
+                        str("textures.dump.noneGeneral")
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -278,8 +278,8 @@ private fun TextureDumpBrowser(
                 }
                 if (state.dumps.isEmpty()) {
                     Text(
-                        if (state.loadingDumps) "Loading saved texture dumps…"
-                        else "No PNG dumps are available in this folder. Refresh to rescan it.",
+                        if (state.loadingDumps) str("textures.dump.loading")
+                        else str("textures.dump.folderEmpty"),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -289,20 +289,20 @@ private fun TextureDumpBrowser(
                         onValueChange = { query.value = it },
                         modifier = Modifier.fillMaxWidth(),
                         singleLine = true,
-                        label = { Text("Search texture filename / hash") },
+                        label = { Text(str("textures.dump.search")) },
                     )
                     TextButton(onClick = { onlyWithoutReplacement.value = !onlyWithoutReplacement.value }) {
-                        Text(if (onlyWithoutReplacement.value) "Show all dumps" else "Show only textures without replacements")
+                        Text(if (onlyWithoutReplacement.value) str("textures.dump.showAll") else str("textures.dump.onlyUnreplaced"))
                     }
                     if (visibleDumps.isEmpty()) {
                         Text(
-                            "No dumps match this search/filter.",
+                            str("textures.dump.noMatch"),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     } else {
                         Text(
-                            "${visibleDumps.size} of ${selectedGame?.fileCount ?: state.dumps.size} recent dump(s) shown (maximum 120).",
+                            str("textures.dump.shown").format(visibleDumps.size, selectedGame?.fileCount ?: state.dumps.size),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -358,16 +358,16 @@ private fun TextureDumpRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
-                    if (item.replacementExists) "Replacement exists" else "No replacement yet",
+                    if (item.replacementExists) str("textures.dump.replacementExists") else str("textures.dump.noReplacement"),
                     style = MaterialTheme.typography.labelSmall,
                     color = if (item.replacementExists) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Column(horizontalAlignment = Alignment.End) {
-                TextButton(onClick = onExport, enabled = enabled) { Text("Export") }
+                TextButton(onClick = onExport, enabled = enabled) { Text(str("textures.dump.export")) }
                 TextButton(onClick = onImport, enabled = enabled) {
-                    Text(if (item.replacementExists) "Import update" else "Import PNG")
+                    Text(if (item.replacementExists) str("textures.dump.importUpdate") else str("textures.dump.import"))
                 }
             }
         }
